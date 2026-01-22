@@ -1,0 +1,31 @@
+{
+  "name": "@azion/example-api",
+  "version": "0.1.0",
+  "description": "Example REST API using @azion/js-auth and @azion/js-api-errors",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run src/server.ts",
+    "dev:azion": "azion dev",
+    "build": "bun build src/index.ts --outdir=dist --target=browser",
+    "build:azion": "bun build src/azion.ts --outfile=dist/azion.js --target=browser --minify",
+    "clean": "rm -rf dist .edge",
+    "deploy": "./scripts/deploy.sh",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@aws-sdk/client-rds-data": "^3.972.0",
+    "@azion/js-api-errors": "file:./js-azion-api-errors",
+    "@azion/js-auth": "file:./js-azion-auth",
+    "@hono/zod-validator": "^0.7.6",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.11.5",
+    "zod": "3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.8",
+    "typescript": "^5.0.0"
+  }
+}

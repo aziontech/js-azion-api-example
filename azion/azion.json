@@ -1,0 +1,36 @@
+{
+  "name": "example-api",
+  "bucket": "example-api",
+  "preset": "",
+  "env": "",
+  "prefix": "20260122194234",
+  "not-first-run": true,
+  "function": {
+    "id": 51251,
+    "name": "example-api",
+    "file": ".edge/worker.js",
+    "args": "./azion/args.json",
+    "instance-id": 46006,
+    "instance-name": "",
+    "cache-id": 0
+  },
+  "application": {
+    "id": 1769107038,
+    "name": "example-api"
+  },
+  "domain": {
+    "id": 1769109420,
+    "name": "example-api",
+    "domain_name": "",
+    "url": ""
+  },
+  "rt-purge": {
+    "purge_on_publish": false
+  },
+  "origin": [],
+  "rules-engine": {
+    "created": false,
+    "rules": []
+  },
+  "cache-settings": []
+}

@@ -1,0 +1,6 @@
+[submodule "js-azion-auth"]
+	path = js-azion-auth
+	url = git@github.com:aziontech/js-azion-auth.git
+[submodule "js-azion-api-errors"]
+	path = js-azion-api-errors
+	url = git@github.com:aziontech/js-azion-api-errors.git

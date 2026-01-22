@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.edge/
+.env
+*.log
+azion/args.json
