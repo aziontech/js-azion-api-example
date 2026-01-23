@@ -22,6 +22,7 @@ This project demonstrates how to build a production-ready REST API for Azion Edg
 - [Error Handling](#error-handling)
 - [Development](#development)
 - [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
 - [Related Libraries](#related-libraries)
 
 ---
@@ -258,21 +259,21 @@ bun run typecheck   # Run TypeScript type checking
 bun test            # Run tests
 ```
 
-### Testing
+### Entry Points
 
-```bash
-# Run all tests
-bun test
+| File | Purpose | Runtime |
+|------|---------|---------|
+| `src/server.ts` | Development server | Bun |
+| `src/azion.ts` | Edge Functions entry | Azion Edge |
+| `src/index.ts` | Hono app (shared) | Both |
 
-# Run specific test file
-bun test src/middleware/validation.test.ts
-```
+### Environment Variables in Azion
 
-### Type Checking
+In Azion Edge Functions, args are passed via `FetchEvent.args`, **not** via `Azion.env.get()`.
 
-```bash
-bun run typecheck
-```
+The `src/env.ts` module provides a unified `getEnv()` function:
+- **Azion Edge:** Reads from `FetchEvent.args` (set by `azion.ts`)
+- **Bun/Node:** Reads from `process.env`
 
 ---
 
@@ -294,6 +295,15 @@ The script will:
 3. Build with `bun build`
 4. Deploy to Azion Edge Functions
 
+### Build
+
+```bash
+bun run build:azion
+# Output: dist/azion.js
+```
+
+> **Important:** Always use `bun build`, not `azion build`. The Azion bundler generates incompatible Node.js imports (`node:fs`, `node:module`) that don't work in the Edge Runtime.
+
 ### Manual Deployment
 
 ```bash
@@ -309,6 +319,25 @@ azion deploy --local --skip-build --yes
 ```
 
 > **Note:** Changes may take 15-30 seconds to propagate globally.
+
+---
+
+## Troubleshooting
+
+### Function not updating after deploy
+
+- Propagation takes ~15-30 seconds
+- Try `?nocache=timestamp` to bypass edge cache
+
+### Build fails with Node.js imports
+
+Always use `bun build --target=browser`. The Azion bundler (`azion build`) adds incompatible `node:fs` and `node:module` imports.
+
+### Args not being read
+
+Args are passed via `FetchEvent.args`, not `Azion.env.get()`. Make sure:
+1. `setAzionArgs()` is called in `azion.ts`
+2. Config modules use `getEnv()` from `env.ts`
 
 ### CI/CD Integration
 
