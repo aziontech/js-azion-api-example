@@ -1,11 +1,21 @@
 /**
- * RDS Data API Configuration
+ * Database Configuration
+ *
+ * Supports both AWS RDS Data API and local PostgreSQL connections.
+ * The connection type is determined by SSO_MODE environment variable:
+ * - development: Uses local PostgreSQL (postgres-js)
+ * - stage/production: Uses AWS RDS Data API
  *
  * Reads configuration from environment variables using the unified
  * getEnv() function that supports both Azion Edge and Bun/Node.js.
  */
 
 import { getEnv } from '../env.ts';
+
+/**
+ * Database connection mode
+ */
+export type DatabaseMode = 'local' | 'aws';
 
 /**
  * RDS Data API Configuration
@@ -17,6 +27,22 @@ export interface RDSConfig {
   resourceArn: string;
   /** ARN of the secret in AWS Secrets Manager */
   secretArn: string;
+  /** Database name */
+  database: string;
+}
+
+/**
+ * Local PostgreSQL Configuration
+ */
+export interface PostgresConfig {
+  /** Database host */
+  host: string;
+  /** Database port */
+  port: number;
+  /** Database user */
+  user: string;
+  /** Database password */
+  password: string;
   /** Database name */
   database: string;
 }
@@ -40,6 +66,38 @@ export function getRDSConfig(): RDSConfig {
 export function isRDSConfigured(): boolean {
   const config = getRDSConfig();
   return !!(config.resourceArn && config.secretArn && config.database);
+}
+
+/**
+ * Get database connection mode based on SSO_MODE
+ *
+ * @returns 'local' for development, 'aws' for stage/production
+ */
+export function getDatabaseMode(): DatabaseMode {
+  const mode = getEnv('SSO_MODE', 'stage');
+  return mode === 'development' ? 'local' : 'aws';
+}
+
+/**
+ * Get local PostgreSQL configuration from environment
+ */
+export function getPostgresConfig(): PostgresConfig {
+  return {
+    host: getEnv('PGHOST', 'localhost'),
+    port: parseInt(getEnv('PGPORT', '5432'), 10),
+    user: getEnv('PGUSER'),
+    password: getEnv('PGPASSWORD'),
+    database: getEnv('PGDATABASE'),
+  };
+}
+
+/**
+ * Validate local PostgreSQL configuration
+ * Returns true if all required fields are present
+ */
+export function isPostgresConfigured(): boolean {
+  const config = getPostgresConfig();
+  return !!(config.user && config.password && config.database);
 }
 
 /**
