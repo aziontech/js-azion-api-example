@@ -203,4 +203,4 @@ export function getCurrentMode(): DatabaseMode {
 
 // Re-export schema and types
 export { schema };
-export type { TestUser, NewTestUser } from './schema.ts';
+export type { TestUser, NewTestUser, ServiceOrder, NewServiceOrder, TaxIdTypeValue } from './schema.ts';
