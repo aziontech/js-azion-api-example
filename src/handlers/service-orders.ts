@@ -12,6 +12,7 @@ import type { AppEnv } from '../types.ts';
 import type { ServiceOrder, NewServiceOrder } from '../db/schema.ts';
 import type { createServiceOrderSchema } from '../middleware/validation.ts';
 import type { z } from 'zod';
+import { verifyPlanExists } from '../clients/product-api.ts';
 
 /**
  * Inferred type from the Zod schema
@@ -257,7 +258,7 @@ export async function getServiceOrderHandler(c: Context<AppEnv>) {
  *
  * Other fields are set programmatically:
  *   - type: 'plan_subscription' (default)
- *   - status: 'DRAFT' (default)
+ *   - status: 'ACTIVE' (default)
  *   - ip, port, timezone: extracted from request context (Marco Civil compliance)
  *   - timestamps: database defaults
  */
@@ -281,14 +282,32 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
     // Get validated data from Zod middleware
     const body = (await c.req.json()) as CreateServiceOrderInput;
 
-    const db = getDB();
-
     // Get auth info for logging
     const auth = c.get('auth');
     console.log(
       `[${requestId}] User ${auth.user?.email} creating service order for account ${body.accountId}`
     );
 
+    // Verify that the plan exists in Product API
+    console.log(`[${requestId}] Verifying plan ${body.planId} exists in Product API`);
+    /* Products API is not published yet. Will uncomment this once it's published
+    const planExists = await verifyPlanExists(body.planId);
+    if (!planExists) {
+      return c.json(
+        {
+          success: false,
+          error: 'Invalid plan',
+          message: `Plan with ID ${body.planId} not found or inactive`,
+          meta: { requestId },
+        },
+        400
+      );
+    }
+    */
+    
+    console.log(`[${requestId}] Plan ${body.planId} verified successfully`);
+
+    const db = getDB();
     const { serviceOrders } = schema;
 
     // Extract client connection info for Marco Civil compliance
@@ -296,7 +315,7 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
     const clientIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()
       || c.req.header('x-real-ip')
       || '127.0.0.1';
-    const clientPort = parseInt(c.req.header('x-forwarded-port') || '0', 10) || 443;
+    const clientPort = parseInt(c.req.header('x-forwarded-port') || '0', 10);
     const clientIpFwd = c.req.header('x-forwarded-for')?.split(',')[1]?.trim() || null;
     const clientPortFwd = null; // Usually not available
     const clientTimezone = c.req.header('x-timezone') || 'America/Sao_Paulo';
@@ -309,7 +328,7 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
       
       // Programmatically set fields
       type: 'plan_subscription',
-      status: 'DRAFT',
+      status: 'ACTIVE',
       gatewayId: null, // Set later when payment gateway is integrated
       
       // Dates - set later during activation

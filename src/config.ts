@@ -1,65 +1,103 @@
 /**
- * Configuration management for the example API
+ * External Services Configuration
  *
- * Reads configuration from environment variables using the unified
- * getEnv() function that supports both Azion Edge and Bun/Node.js.
+ * Manages URLs and authentication for external APIs.
+ * URLs vary based on SSO_MODE environment variable.
  */
 
-import type { EnvironmentMode } from '@azion/js-auth';
 import { getEnv } from './env.ts';
 
 /**
- * API Configuration
+ * Application configuration
  */
-interface Config {
-  /** SSO environment mode */
-  mode: EnvironmentMode;
-  /** GraphQL secret for SSO communication */
+export interface AppConfig {
+  mode: string;
   gqlSecret: string;
-  /** Public key for JWT validation (optional) */
-  jwtPublicKey?: string;
-  /** Server port (for local development) */
+  jwtPublicKey: string;
   port: number;
 }
 
 /**
- * Build configuration from environment variables
+ * Get application configuration from environment
+ *
+ * This is the main config function used by auth middleware and server.
  */
-function getConfig(): Config {
-  const mode = getEnv('SSO_MODE', 'stage') as EnvironmentMode;
-  const gqlSecret = getEnv('SSO_GQL_SECRET');
-  const jwtPublicKey = getEnv('PUBLIC_JWT_ACCESS_TOKEN_KEY') || undefined;
-  const port = parseInt(getEnv('PORT', '3000'), 10);
-
-  // Validate required config for non-development modes
-  if (mode !== 'development' && !gqlSecret) {
-    console.warn(
-      '[Config] SSO_GQL_SECRET is not set. Authentication may fail in non-development mode.'
-    );
-  }
-
+export function config(): AppConfig {
   return {
-    mode,
-    gqlSecret,
-    jwtPublicKey,
-    port,
+    mode: getEnv('SSO_MODE', 'stage'),
+    gqlSecret: getEnv('SSO_GQL_SECRET', ''),
+    jwtPublicKey: getEnv('PUBLIC_JWT_ACCESS_TOKEN_KEY', ''),
+    port: parseInt(getEnv('PORT', '3000'), 10),
   };
 }
 
 /**
- * Global config instance (lazy loaded)
+ * Environment mode type
  */
-let _config: Config | null = null;
+export type EnvironmentMode = 'development' | 'stage' | 'production';
 
 /**
- * Get API configuration
- *
- * Configuration is lazy-loaded on first call and cached.
- * In Azion Edge, ensure setAzionArgs() is called before accessing config.
+ * Get the current environment mode from SSO_MODE
  */
-export function config(): Config {
-  if (!_config) {
-    _config = getConfig();
-  }
-  return _config;
+export function getEnvironmentMode(): EnvironmentMode {
+  const mode = getEnv('SSO_MODE', 'stage');
+  if (mode === 'development') return 'development';
+  if (mode === 'production') return 'production';
+  return 'stage';
+}
+
+/**
+ * Product API Configuration
+ */
+export interface ProductApiConfig {
+  baseUrl: string;
+  timeout: number;
+}
+
+/**
+ * Get Product API configuration based on environment
+ *
+ * Development: localhost:7777
+ * Stage: staging product API URL
+ * Production: production product API URL
+ */
+export function getProductApiConfig(): ProductApiConfig {
+  const mode = getEnvironmentMode();
+  
+  const baseUrls: Record<EnvironmentMode, string> = {
+    development: getEnv('PRODUCT_API_URL', 'http://localhost:7777'),
+    stage: getEnv('PRODUCT_API_URL', 'https://api.staging.azion.com/products'),
+    production: getEnv('PRODUCT_API_URL', 'https://api.azion.com/products'),
+  };
+  
+  return {
+    baseUrl: baseUrls[mode],
+    timeout: parseInt(getEnv('PRODUCT_API_TIMEOUT', '5000'), 10),
+  };
+}
+
+/**
+ * Accounts API Configuration
+ */
+export interface AccountsApiConfig {
+  baseUrl: string;
+  timeout: number;
+}
+
+/**
+ * Get Accounts API configuration based on environment
+ */
+export function getAccountsApiConfig(): AccountsApiConfig {
+  const mode = getEnvironmentMode();
+  
+  const baseUrls: Record<EnvironmentMode, string> = {
+    development: getEnv('ACCOUNTS_API_URL', 'http://localhost:7777'),
+    stage: getEnv('ACCOUNTS_API_URL', 'https://api.staging.azion.com/accounts'),
+    production: getEnv('ACCOUNTS_API_URL', 'https://api.azion.com/accounts'),
+  };
+  
+  return {
+    baseUrl: baseUrls[mode],
+    timeout: parseInt(getEnv('ACCOUNTS_API_TIMEOUT', '5000'), 10),
+  };
 }
