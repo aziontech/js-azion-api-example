@@ -166,6 +166,24 @@ export const uuidParamSchema = z.object({
 // ============================================================================
 
 /**
+ * Create service order schema
+ *
+ * Minimal client input - only accountId and planId are required.
+ * Other fields (type, status, audit fields, etc.) are set programmatically
+ * before recording to the database.
+ */
+export const createServiceOrderSchema = z.object({
+  // Account reference (required)
+  accountId: z
+    .number()
+    .int()
+    .positive({ message: 'accountId must be a positive integer' }),
+
+  // Plan reference (required) - UUID string
+  planId: z.string().uuid({ message: 'planId must be a valid UUID' }),
+});
+
+/**
  * Create user schema
  */
 export const createUserSchema = z.object({

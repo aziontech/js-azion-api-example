@@ -40,10 +40,12 @@ import {
   createUserSchema,
   idParamSchema,
   paramValidator,
+  createServiceOrderSchema,
 } from './middleware/validation.ts';
 import { healthHandler } from './handlers/health.ts';
 import { listTasksHandler, getTaskHandler } from './handlers/tasks.ts';
 import { dbTestGetHandler, dbTestPostHandler } from './handlers/db-test.ts';
+import { listServiceOrdersHandler, getServiceOrderHandler, createServiceOrderHandler } from './handlers/service-orders.ts';
 import type { AppEnv } from './types.ts';
 
 // Create Hono app with typed environment
@@ -110,6 +112,21 @@ app.post(
   jsonValidator(createUserSchema),
   dbTestPostHandler
 );
+
+// Service Orders endpoints
+// GET /service-orders - List all service orders (requires auth)
+app.get('/service-orders', azionAuthMiddleware, listServiceOrdersHandler);
+
+// POST /service-orders - Create a new service order (requires auth + validation)
+app.post(
+  '/service-orders',
+  azionAuthMiddleware,
+  jsonValidator(createServiceOrderSchema),
+  createServiceOrderHandler
+);
+
+// GET /service-orders/:id - Get a single service order (requires auth)
+app.get('/service-orders/:id', azionAuthMiddleware, getServiceOrderHandler);
 
 // ============================================================================
 // Error Handlers
