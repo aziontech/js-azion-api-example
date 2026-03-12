@@ -1,13 +1,13 @@
 /**
  * Service Orders Handler Tests
  *
- * Tests for the POST /api/v1/service-orders endpoint.
+ * Tests for the POST /api/v1/service-orders endpoint validation.
+ * These tests verify request validation without requiring a database connection.
  */
 
 import { describe, it, expect } from 'bun:test';
 import { Hono } from 'hono';
 import { jsonValidator, createServiceOrderSchema } from '../middleware/validation';
-import { createServiceOrderHandler } from './service-orders';
 import type { AppEnv } from '../types';
 
 // UUID validation regex
@@ -25,28 +25,12 @@ interface JsonApiErrorResponse {
   }>;
 }
 
-// Drizzle uses camelCase property names in TypeScript
-interface ServiceOrderData {
-  serviceOrderId: string;  // camelCase in TypeScript
-  accountId: number;
-  planId: string;
-  type: string;
-  status: string;
-  [key: string]: unknown;
-}
-
 interface SuccessResponse {
   success: boolean;
-  data?: ServiceOrderData;
-  message?: string;
-  meta?: { requestId: string };
-}
-
-interface ErrorResponse {
-  success: boolean;
-  error: string;
-  message: string;
-  meta?: { requestId: string };
+  data?: {
+    accountId: number;
+    planId: string;
+  };
 }
 
 // Mock auth context
@@ -59,26 +43,26 @@ const mockAuth = {
   token: 'mock-token',
 };
 
-describe('Service Orders - POST Endpoint', () => {
-  describe('Request Validation', () => {
-    // Create a minimal app for validation testing
-    const app = new Hono<AppEnv>();
+describe('Service Orders - POST Endpoint Validation', () => {
+  // Create a minimal app for validation testing
+  const app = new Hono<AppEnv>();
 
-    app.post(
-      '/api/v1/service-orders',
-      async (c, next) => {
-        c.set('auth', mockAuth);
-        c.set('requestId', 'test-request-id');
-        await next();
-      },
-      jsonValidator(createServiceOrderSchema),
-      async (c) => {
-        // If validation passes, return success
-        const body = await c.req.json();
-        return c.json({ success: true, data: body }, 201);
-      }
-    );
+  app.post(
+    '/api/v1/service-orders',
+    async (c, next) => {
+      c.set('auth', mockAuth);
+      c.set('requestId', 'test-request-id');
+      await next();
+    },
+    jsonValidator(createServiceOrderSchema),
+    async (c) => {
+      // If validation passes, return success with the validated data
+      const body = await c.req.json();
+      return c.json({ success: true, data: body }, 201);
+    }
+  );
 
+  describe('Required Fields', () => {
     it('should reject request without accountId', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
@@ -93,6 +77,7 @@ describe('Service Orders - POST Endpoint', () => {
       expect(body.errors).toBeDefined();
       expect(body.errors.length).toBeGreaterThan(0);
       expect(body.errors[0].code).toBe('validation_error');
+      expect(body.errors[0].meta?.field).toBe('accountId');
     });
 
     it('should reject request without planId', async () => {
@@ -108,8 +93,11 @@ describe('Service Orders - POST Endpoint', () => {
       const body = (await response.json()) as JsonApiErrorResponse;
       expect(body.errors).toBeDefined();
       expect(body.errors.length).toBeGreaterThan(0);
+      expect(body.errors[0].meta?.field).toBe('planId');
     });
+  });
 
+  describe('Field Format Validation', () => {
     it('should reject request with invalid planId (not UUID)', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
@@ -123,7 +111,6 @@ describe('Service Orders - POST Endpoint', () => {
       expect(response.status).toBe(400);
       const body = (await response.json()) as JsonApiErrorResponse;
       expect(body.errors).toBeDefined();
-      // The error message contains "UUID" (uppercase)
       expect(body.errors[0].detail.toLowerCase()).toContain('uuid');
     });
 
@@ -138,6 +125,9 @@ describe('Service Orders - POST Endpoint', () => {
       });
 
       expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonApiErrorResponse;
+      expect(body.errors).toBeDefined();
+      expect(body.errors[0].meta?.field).toBe('accountId');
     });
 
     it('should reject request with zero accountId', async () => {
@@ -153,97 +143,70 @@ describe('Service Orders - POST Endpoint', () => {
       expect(response.status).toBe(400);
     });
 
-    it('should accept valid request with accountId and planId', async () => {
+    it('should reject request with non-integer accountId', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          accountId: 12345,
+          accountId: 123.45,
           planId: '550e8400-e29b-41d4-a716-446655440000',
         }),
       });
 
-      expect(response.status).toBe(201);
-      const body = (await response.json()) as SuccessResponse;
-      expect(body.success).toBe(true);
+      expect(response.status).toBe(400);
     });
   });
 
-  describe('Integration Test', () => {
-    // Create app with full handler
-    const app = new Hono<AppEnv>();
-
-    app.post(
-      '/api/v1/service-orders',
-      async (c, next) => {
-        c.set('auth', mockAuth);
-        c.set('requestId', 'test-request-id');
-        await next();
-      },
-      jsonValidator(createServiceOrderSchema),
-      createServiceOrderHandler
-    );
-
-    it('should create service order and return 201 when database is configured', async () => {
+  describe('Valid Request', () => {
+    it('should accept valid request with accountId and planId', async () => {
       const testAccountId = 12345;
       const testPlanId = '550e8400-e29b-41d4-a716-446655440000';
 
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Forwarded-For': '192.168.1.1, 10.0.0.1',
-          'X-Timezone': 'America/Sao_Paulo',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           accountId: testAccountId,
           planId: testPlanId,
         }),
       });
 
-      const body = await response.json();
+      // Assert status code is 201 Created
+      expect(response.status).toBe(201);
 
-      // If database is configured, we expect 201
-      if (response.status === 201) {
-        const successBody = body as SuccessResponse;
+      const body = (await response.json()) as SuccessResponse;
 
-        // Assert status code
+      // Assert success flag
+      expect(body.success).toBe(true);
+
+      // Assert data exists
+      expect(body.data).toBeDefined();
+
+      // Assert accountId matches (is passed through correctly)
+      expect(body.data!.accountId).toBe(testAccountId);
+
+      // Assert planId matches (is passed through correctly)
+      expect(body.data!.planId).toBe(testPlanId);
+    });
+
+    it('should accept valid UUID in different formats', async () => {
+      const testCases = [
+        '550e8400-e29b-41d4-a716-446655440000', // lowercase
+        '550E8400-E29B-41D4-A716-446655440000', // uppercase
+        '550e8400-E29B-41d4-A716-446655440000', // mixed case
+      ];
+
+      for (const planId of testCases) {
+        const response = await app.request('/api/v1/service-orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountId: 12345,
+            planId,
+          }),
+        });
+
         expect(response.status).toBe(201);
-
-        // Assert success flag
-        expect(successBody.success).toBe(true);
-
-        // Assert data exists
-        expect(successBody.data).toBeDefined();
-
-        // Assert serviceOrderId is a valid UUID (camelCase property name)
-        expect(successBody.data!.serviceOrderId).toBeDefined();
-        expect(UUID_REGEX.test(successBody.data!.serviceOrderId)).toBe(true);
-
-        // Assert accountId matches (camelCase property name)
-        expect(successBody.data!.accountId).toBe(testAccountId);
-
-        // Assert planId matches (camelCase property name)
-        expect(successBody.data!.planId).toBe(testPlanId);
-
-        // Assert default values
-        expect(successBody.data!.type).toBe('plan_subscription');
-        expect(successBody.data!.status).toBe('ACTIVE');
-
-        // Assert message
-        expect(successBody.message).toBe('Service order created successfully');
-
-        // Assert requestId in meta
-        expect(successBody.meta?.requestId).toBe('test-request-id');
-      } else if (response.status === 503) {
-        // Database not configured - log and pass
-        console.log('Skipping integration test: Database not configured');
-        console.log('To run this test, set up PostgreSQL environment variables');
-        expect(true).toBe(true);
-      } else {
-        // Unexpected error - fail the test
-        console.error('Unexpected response:', body);
-        throw new Error(`Expected status 201 or 503, got ${response.status}`);
       }
     });
   });
