@@ -54,29 +54,6 @@ export const serviceOrderStatusEnum = pgEnum('service_order_status', [
  *
  * Main table for managing service subscriptions and orders.
  *
- * SQL Definition:
- * CREATE TABLE service_order (
- *     service_order_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- *     account_id           BIGINT NOT NULL,
- *     type                 VARCHAR(50) NOT NULL,
- *     status               VARCHAR(20) NOT NULL,
- *     plan_id              UUID NOT NULL,
- *     gateway_id           UUID REFERENCES gateway(gateway_id),
- *     start_date           TIMESTAMPTZ,
- *     end_date             TIMESTAMPTZ,
- *     current_period_start TIMESTAMPTZ,
- *     current_period_end   TIMESTAMPTZ,
- *     auto_renew           BOOLEAN DEFAULT true,
- *     ip                   INET NOT NULL,
- *     port                 INTEGER NOT NULL,
- *     ip_fwd               INET,
- *     port_fwd             INTEGER,
- *     timezone             VARCHAR(50) NOT NULL,
- *     metadata             JSONB DEFAULT '{}',
- *     created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- *     updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- *     last_editor          VARCHAR(100)
- * );
  */
 export const serviceOrders = pgTable(
   'service_order',
