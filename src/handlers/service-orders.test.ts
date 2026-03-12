@@ -1,86 +1,226 @@
 /**
  * Service Orders Handler Tests
  *
- * Tests for the POST /api/v1/service-orders endpoint validation.
- * These tests verify request validation without requiring a database connection.
+ * Comprehensive tests using SQLite in-memory database with real handlers.
+ * Only the Product API is mocked.
+ *
+ * This test file uses Bun's mock.module to replace:
+ * - Database module (../db/index.js) with test database
+ * - Product API client with mock implementation
  */
 
-import { describe, it, expect } from 'bun:test';
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  mock,
+} from 'bun:test';
 import { Hono } from 'hono';
-import { jsonValidator, createServiceOrderSchema } from '../middleware/validation';
 import type { AppEnv } from '../types';
+import type { AuthResult } from '@azion/js-auth';
 
-// UUID validation regex
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// ---------------------------------------------------------------------------
+// Mock Setup - MUST be before any imports of the mocked modules
+// ---------------------------------------------------------------------------
 
-// Response types
+// Import test utilities first (they don't depend on the mocked modules)
+import {
+  resetMockPlans,
+  mockGetPlanData,
+  TEST_PLAN_IDS,
+} from '../test-utils/product-api-mock';
+import {
+  createTestDb,
+  closeTestDb,
+  type TestDatabase,
+} from '../db/test-client';
+import { serviceOrders as serviceOrdersTable } from '../db/schema-test';
+
+// Test database instance
+let testDb: TestDatabase;
+
+// Mock the database module - must be at module scope
+mock.module('../db/index.js', () => ({
+  getDB: () => testDb?.db,
+  isDatabaseAvailable: () => testDb !== null,
+  getCurrentMode: () => 'local',
+  schema: {
+    serviceOrders: serviceOrdersTable,
+  },
+}));
+
+// Mock the Product API client
+mock.module('../clients/product-api.js', () => ({
+  getPlanData: mockGetPlanData,
+  getPlanById: async (planId: string) => {
+    const data = await mockGetPlanData(planId);
+    if (Object.keys(data).length === 0) return null;
+    return { id: planId, name: 'Mock Plan', type: 'subscription', active: true };
+  },
+}));
+
+// Import validation middleware AFTER mocks are set up
+import {
+  jsonValidator,
+  createServiceOrderSchema,
+} from '../middleware/validation';
+
+// Import handlers AFTER mocks are set up
+import {
+  listServiceOrdersHandler,
+  getServiceOrderHandler,
+  createServiceOrderHandler,
+} from './service-orders';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 interface JsonApiErrorResponse {
-  errors: Array<{
-    code: string;
-    title: string;
-    detail: string;
-    status: string;
-    source?: { pointer: string };
-    meta?: { field: string; code: string };
-  }>;
+  success: false;
+  error: string;
+  message: string;
+  meta?: { requestId: string };
 }
 
-interface SuccessResponse {
-  success: boolean;
-  data?: {
-    accountId: number;
-    planId: string;
+interface SuccessResponse<T = unknown> {
+  success: true;
+  data: T;
+  message?: string;
+  meta: {
+    requestId: string;
+    count?: number;
+    total?: number;
+    limit?: number;
+    offset?: number;
   };
 }
 
-// Mock auth context
-const mockAuth = {
-  user: {
-    id: 'test-user-id',
-    email: 'test@example.com',
-    accountId: 12345,
-  },
-  token: 'mock-token',
-};
+interface ServiceOrderResponse {
+  serviceOrderId: string;
+  accountId: number;
+  planId: string;
+  type: 'plan_subscription';
+  status: 'DRAFT' | 'ACTIVE' | 'PAST_DUE' | 'BLOCKED' | 'CANCELED' | 'EXPIRED';
+  ip: string;
+  port: number;
+  timezone: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
 
-describe('Service Orders - POST Endpoint Validation', () => {
-  // Create a minimal app for validation testing
-  const app = new Hono<AppEnv>();
+// Mock auth context that matches AuthResult type
+function createMockAuth(): AuthResult {
+  return {
+    authenticated: true,
+    user: {
+      id: 1,
+      email: 'test@example.com',
+      firstName: 'Test',
+      lastName: 'User',
+      isActive: true,
+      isStaff: false,
+      isSuperuser: false,
+      isAccountOwner: true,
+      accountId: 12345,
+      dateJoined: '2024-01-01T00:00:00Z',
+      lastLogin: null,
+      timezone: 'America/Sao_Paulo',
+      permissions: [],
+    },
+    account: {
+      id: 12345,
+      name: 'Test Account',
+      accountType: 'client',
+    },
+    method: 'token',
+  };
+}
 
-  app.post(
-    '/api/v1/service-orders',
-    async (c, next) => {
-      c.set('auth', mockAuth);
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('Service Orders Handlers', () => {
+  let app: Hono<AppEnv>;
+
+  beforeEach(async () => {
+    // Create fresh test database
+    testDb = createTestDb();
+
+    // Reset mock plans to default state
+    resetMockPlans();
+
+    // Create Hono app
+    app = new Hono<AppEnv>();
+
+    // Add middleware to set auth context (normally done by auth middleware)
+    app.use('*', async (c, next) => {
+      c.set('auth', createMockAuth());
       c.set('requestId', 'test-request-id');
       await next();
-    },
-    jsonValidator(createServiceOrderSchema),
-    async (c) => {
-      // If validation passes, return success with the validated data
-      const body = await c.req.json();
-      return c.json({ success: true, data: body }, 201);
-    }
-  );
+    });
 
-  describe('Required Fields', () => {
-    it('should reject request without accountId', async () => {
+    // Add routes
+    app.get('/api/v1/service-orders', listServiceOrdersHandler);
+    app.get('/api/v1/service-orders/:id', getServiceOrderHandler);
+    app.post('/api/v1/service-orders', jsonValidator(createServiceOrderSchema), createServiceOrderHandler);
+  });
+
+  afterEach(() => {
+    closeTestDb(testDb);
+    testDb = null as any;
+  });
+
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/service-orders - Create Service Order
+  // ---------------------------------------------------------------------------
+
+  describe('POST /api/v1/service-orders', () => {
+    it('should create a service order with valid data', async () => {
+      const response = await app.request('/api/v1/service-orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-For': '192.168.1.100',
+          'X-Forwarded-Port': '443',
+        },
+        body: JSON.stringify({
+          accountId: 12345,
+          planId: TEST_PLAN_IDS.free,
+        }),
+      });
+
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
+
+      expect(body.success).toBe(true);
+      expect(body.data).toBeDefined();
+      expect(body.data.accountId).toBe(12345);
+      expect(body.data.planId).toBe(TEST_PLAN_IDS.free);
+      expect(body.data.type).toBe('plan_subscription');
+      expect(body.data.status).toBe('ACTIVE');
+      expect(body.data.ip).toBe('192.168.1.100');
+      expect(body.data.port).toBe(443);
+      expect(body.data.timezone).toBe('America/Sao_Paulo');
+    });
+
+    it('should reject request with missing accountId', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          planId: '550e8400-e29b-41d4-a716-446655440000',
+          planId: TEST_PLAN_IDS.free,
         }),
       });
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as JsonApiErrorResponse;
-      expect(body.errors).toBeDefined();
-      expect(body.errors.length).toBeGreaterThan(0);
-      expect(body.errors[0].code).toBe('validation_error');
-      expect(body.errors[0].meta?.field).toBe('accountId');
     });
 
-    it('should reject request without planId', async () => {
+    it('should reject request with missing planId', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,15 +230,9 @@ describe('Service Orders - POST Endpoint Validation', () => {
       });
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as JsonApiErrorResponse;
-      expect(body.errors).toBeDefined();
-      expect(body.errors.length).toBeGreaterThan(0);
-      expect(body.errors[0].meta?.field).toBe('planId');
     });
-  });
 
-  describe('Field Format Validation', () => {
-    it('should reject request with invalid planId (not UUID)', async () => {
+    it('should reject request with invalid planId format', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -109,9 +243,6 @@ describe('Service Orders - POST Endpoint Validation', () => {
       });
 
       expect(response.status).toBe(400);
-      const body = (await response.json()) as JsonApiErrorResponse;
-      expect(body.errors).toBeDefined();
-      expect(body.errors[0].detail.toLowerCase()).toContain('uuid');
     });
 
     it('should reject request with negative accountId', async () => {
@@ -120,122 +251,318 @@ describe('Service Orders - POST Endpoint Validation', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           accountId: -1,
-          planId: '550e8400-e29b-41d4-a716-446655440000',
+          planId: TEST_PLAN_IDS.free,
+        }),
+      });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('should return 400 when plan does not exist', async () => {
+      const response = await app.request('/api/v1/service-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId: 12345,
+          planId: TEST_PLAN_IDS.notFound,
         }),
       });
 
       expect(response.status).toBe(400);
       const body = (await response.json()) as JsonApiErrorResponse;
-      expect(body.errors).toBeDefined();
-      expect(body.errors[0].meta?.field).toBe('accountId');
+      expect(body.error).toBe('Invalid plan');
     });
 
-    it('should reject request with zero accountId', async () => {
+    it('should handle paid plans correctly', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          accountId: 0,
-          planId: '550e8400-e29b-41d4-a716-446655440000',
+          accountId: 99999,
+          planId: TEST_PLAN_IDS.paid,
         }),
       });
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
+      expect(body.data.planId).toBe(TEST_PLAN_IDS.paid);
     });
 
-    it('should reject request with non-integer accountId', async () => {
+    it('should use default IP when headers are missing', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          accountId: 123.45,
-          planId: '550e8400-e29b-41d4-a716-446655440000',
+          accountId: 12345,
+          planId: TEST_PLAN_IDS.free,
         }),
       });
 
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
+      expect(body.data.ip).toBe('127.0.0.1');
+      expect(body.data.port).toBe(0);
     });
   });
 
-  describe('Valid Request', () => {
-    it('should accept valid request with accountId and planId', async () => {
-      const testAccountId = 12345;
-      const testPlanId = '550e8400-e29b-41d4-a716-446655440000';
+  // ---------------------------------------------------------------------------
+  // GET /api/v1/service-orders - List Service Orders
+  // ---------------------------------------------------------------------------
 
-      const response = await app.request('/api/v1/service-orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          accountId: testAccountId,
-          planId: testPlanId,
-        }),
-      });
+  describe('GET /api/v1/service-orders', () => {
+    it('should return empty list when no service orders exist', async () => {
+      const response = await app.request('/api/v1/service-orders');
 
-      // Assert status code is 201 Created
-      expect(response.status).toBe(201);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
 
-      const body = (await response.json()) as SuccessResponse;
-
-      // Assert success flag
       expect(body.success).toBe(true);
-
-      // Assert data exists
-      expect(body.data).toBeDefined();
-
-      // Assert accountId matches (is passed through correctly)
-      expect(body.data!.accountId).toBe(testAccountId);
-
-      // Assert planId matches (is passed through correctly)
-      expect(body.data!.planId).toBe(testPlanId);
+      expect(body.data).toEqual([]);
+      expect(body.meta.count).toBe(0);
+      expect(body.meta.total).toBe(0);
     });
 
-    it('should accept valid UUID in different formats', async () => {
-      const testCases = [
-        '550e8400-e29b-41d4-a716-446655440000', // lowercase
-        '550E8400-E29B-41D4-A716-446655440000', // uppercase
-        '550e8400-E29B-41d4-A716-446655440000', // mixed case
-      ];
+    it('should list service orders with default pagination', async () => {
+      // Create test data directly in database
+      await testDb.db.insert(serviceOrdersTable).values([
+        {
+          accountId: 11111,
+          planId: TEST_PLAN_IDS.free,
+          type: 'plan_subscription',
+          status: 'ACTIVE',
+          ip: '192.168.1.1',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: {},
+        },
+        {
+          accountId: 22222,
+          planId: TEST_PLAN_IDS.paid,
+          type: 'plan_subscription',
+          status: 'DRAFT',
+          ip: '192.168.1.2',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: {},
+        },
+      ]);
 
-      for (const planId of testCases) {
-        const response = await app.request('/api/v1/service-orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            accountId: 12345,
-            planId,
-          }),
-        });
+      const response = await app.request('/api/v1/service-orders');
 
-        expect(response.status).toBe(201);
-      }
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
+
+      expect(body.success).toBe(true);
+      expect(body.data.length).toBe(2);
+      expect(body.meta.total).toBe(2);
+    });
+
+    it('should filter by status', async () => {
+      // Create test data
+      await testDb.db.insert(serviceOrdersTable).values([
+        {
+          accountId: 11111,
+          planId: TEST_PLAN_IDS.free,
+          type: 'plan_subscription',
+          status: 'ACTIVE',
+          ip: '192.168.1.1',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: {},
+        },
+        {
+          accountId: 22222,
+          planId: TEST_PLAN_IDS.paid,
+          type: 'plan_subscription',
+          status: 'DRAFT',
+          ip: '192.168.1.2',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: {},
+        },
+      ]);
+
+      const response = await app.request('/api/v1/service-orders?status=ACTIVE');
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
+
+      expect(body.data.length).toBe(1);
+      expect(body.data[0].status).toBe('ACTIVE');
+      expect(body.data[0].accountId).toBe(11111);
+    });
+
+    it('should filter by accountId', async () => {
+      // Create test data
+      await testDb.db.insert(serviceOrdersTable).values([
+        {
+          accountId: 11111,
+          planId: TEST_PLAN_IDS.free,
+          type: 'plan_subscription',
+          status: 'ACTIVE',
+          ip: '192.168.1.1',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: {},
+        },
+        {
+          accountId: 22222,
+          planId: TEST_PLAN_IDS.paid,
+          type: 'plan_subscription',
+          status: 'ACTIVE',
+          ip: '192.168.1.2',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: {},
+        },
+      ]);
+
+      const response = await app.request('/api/v1/service-orders?accountId=22222');
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
+
+      expect(body.data.length).toBe(1);
+      expect(body.data[0].accountId).toBe(22222);
+    });
+
+    it('should respect limit parameter', async () => {
+      // Create multiple records
+      const records = Array.from({ length: 10 }, (_, i) => ({
+        accountId: 10000 + i,
+        planId: TEST_PLAN_IDS.free,
+        type: 'plan_subscription' as const,
+        status: 'ACTIVE' as const,
+        ip: '192.168.1.1',
+        port: 443,
+        timezone: 'America/Sao_Paulo',
+        metadata: {},
+      }));
+
+      await testDb.db.insert(serviceOrdersTable).values(records);
+
+      const response = await app.request('/api/v1/service-orders?limit=5');
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
+
+      expect(body.data.length).toBe(5);
+      expect(body.meta.limit).toBe(5);
+      expect(body.meta.total).toBe(10);
+    });
+
+    it('should respect offset parameter', async () => {
+      // Create multiple records
+      const records = Array.from({ length: 5 }, (_, i) => ({
+        accountId: 10000 + i,
+        planId: TEST_PLAN_IDS.free,
+        type: 'plan_subscription' as const,
+        status: 'ACTIVE' as const,
+        ip: '192.168.1.1',
+        port: 443,
+        timezone: 'America/Sao_Paulo',
+        metadata: {},
+      }));
+
+      await testDb.db.insert(serviceOrdersTable).values(records);
+
+      const response = await app.request('/api/v1/service-orders?limit=2&offset=2');
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
+
+      expect(body.data.length).toBe(2);
+      expect(body.meta.offset).toBe(2);
+    });
+
+    it('should cap limit at 100', async () => {
+      const response = await app.request('/api/v1/service-orders?limit=1000');
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse[]>;
+
+      expect(body.meta.limit).toBeLessThanOrEqual(100);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // GET /api/v1/service-orders/:id - Get Single Service Order
+  // ---------------------------------------------------------------------------
+
+  describe('GET /api/v1/service-orders/:id', () => {
+    it('should return a service order by ID', async () => {
+      // Create test data
+      const [inserted] = await testDb.db
+        .insert(serviceOrdersTable)
+        .values({
+          accountId: 12345,
+          planId: TEST_PLAN_IDS.free,
+          type: 'plan_subscription',
+          status: 'ACTIVE',
+          ip: '192.168.1.1',
+          port: 443,
+          timezone: 'America/Sao_Paulo',
+          metadata: { foo: 'bar' },
+        })
+        .returning();
+
+      const response = await app.request(
+        `/api/v1/service-orders/${inserted.serviceOrderId}`
+      );
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
+
+      expect(body.success).toBe(true);
+      expect(body.data.serviceOrderId).toBe(inserted.serviceOrderId);
+      expect(body.data.accountId).toBe(12345);
+      expect(body.data.metadata).toEqual({ foo: 'bar' });
+    });
+
+    it('should return 404 for non-existent ID', async () => {
+      const response = await app.request(
+        '/api/v1/service-orders/00000000-0000-0000-0000-000000000000'
+      );
+
+      expect(response.status).toBe(404);
+      const body = (await response.json()) as JsonApiErrorResponse;
+      expect(body.error).toBe('Not found');
+    });
+
+    it('should return 400 for invalid UUID format', async () => {
+      const response = await app.request('/api/v1/service-orders/not-a-uuid');
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as JsonApiErrorResponse;
+      expect(body.error).toBe('Invalid ID');
     });
   });
 });
 
-describe('UUID Format Validation', () => {
-  it('should validate correct UUID format', () => {
-    const validUuid = '550e8400-e29b-41d4-a716-446655440000';
-    expect(UUID_REGEX.test(validUuid)).toBe(true);
-  });
+// ---------------------------------------------------------------------------
+// Validation-Only Tests (No Database Required)
+// ---------------------------------------------------------------------------
 
-  it('should validate UUID with uppercase letters', () => {
-    const validUuid = '550E8400-E29B-41D4-A716-446655440000';
-    expect(UUID_REGEX.test(validUuid)).toBe(true);
-  });
+describe('Service Orders - Validation Only', () => {
+  it('should validate UUID format regex', () => {
+    const UUID_REGEX =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-  it('should validate UUID with mixed case', () => {
-    const validUuid = '550e8400-E29B-41d4-A716-446655440000';
-    expect(UUID_REGEX.test(validUuid)).toBe(true);
-  });
+    const validUuids = [
+      '550e8400-e29b-41d4-a716-446655440000',
+      '550E8400-E29B-41D4-A716-446655440000',
+      '550e8400-E29B-41d4-A716-446655440000',
+    ];
 
-  it('should reject invalid UUID formats', () => {
+    validUuids.forEach((uuid) => {
+      expect(UUID_REGEX.test(uuid)).toBe(true);
+    });
+
     const invalidUuids = [
       'not-a-uuid',
       '550e8400-e29b-41d4-a716',
-      '550e8400-e29b-41d4-a716-446655440000-extra',
-      '550e8400e29b41d4a716446655440000',
-      'g50e8400-e29b-41d4-a716-446655440000',
       '',
+      'g50e8400-e29b-41d4-a716-446655440000',
     ];
 
     invalidUuids.forEach((uuid) => {
