@@ -12,7 +12,7 @@ import type { AppEnv } from '../types.ts';
 import type { ServiceOrder, NewServiceOrder } from '../db/schema.ts';
 import type { createServiceOrderSchema } from '../middleware/validation.ts';
 import type { z } from 'zod';
-import { verifyPlanExists } from '../clients/product-api.ts';
+import { getPlanData } from '../clients/product-api.ts';
 
 /**
  * Inferred type from the Zod schema
@@ -288,24 +288,24 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
       `[${requestId}] User ${auth.user?.email} creating service order for account ${body.accountId}`
     );
 
-    // Verify that the plan exists in Product API
-    console.log(`[${requestId}] Verifying plan ${body.planId} exists in Product API`);
-    /* Products API is not published yet. Will uncomment this once it's published
-    const planExists = await verifyPlanExists(body.planId);
-    if (!planExists) {
+    // Verify that the plan exists in Product API, and get plan data
+    console.log(`[${requestId}] Fetching plan data for ${body.planId} from Product API`);
+    const planData = await getPlanData(body.planId);
+    
+    // Check if plan exists (empty object means not found)
+    if (Object.keys(planData).length === 0) {
       return c.json(
         {
           success: false,
           error: 'Invalid plan',
-          message: `Plan with ID ${body.planId} not found or inactive`,
+          message: `Plan with ID ${body.planId} not found`,
           meta: { requestId },
         },
         400
       );
     }
-    */
     
-    console.log(`[${requestId}] Plan ${body.planId} verified successfully`);
+    console.log(`[${requestId}] Plan ${body.planId} found:`, planData);
 
     const db = getDB();
     const { serviceOrders } = schema;

@@ -20,6 +20,14 @@ export interface PlanResponse {
 }
 
 /**
+ * Plan data returned by getPlanData
+ */
+export interface PlanData {
+  price_value: number;
+  type: 'free' | 'paid';
+}
+
+/**
  * Check if a plan exists in the Product API
  *
  * @param planId - UUID of the plan to check
@@ -65,20 +73,23 @@ export async function getPlanById(planId: string): Promise<PlanResponse | null> 
 }
 
 /**
- * Verify a plan exists and is active
+ * Get plan data from the Product API
  *
- * @param planId - UUID of the plan to verify
- * @returns true if plan exists and is active
- * @throws Error if plan doesn't exist, is inactive, or API fails
+ * @param planId - UUID of the plan to check
+ * @returns Empty object {} if plan doesn't exist, or {price_value, type} if plan exists
+ * @throws Error if the API request fails (other than 404)
  */
-export async function verifyPlanExists(planId: string): Promise<boolean> {
+export async function getPlanData(planId: string): Promise<PlanData | Record<string, never>> {
   const plan = await getPlanById(planId);
   
   if (!plan) {
-    return false;
+    return {}; // Plan not found - return empty object
   }
   
-  // Optionally check if plan is active
-  // return plan.active === true;
-  return true;
+  // Plan exists - return mock data for now
+  // TODO: Integrate with actual Product API to get real price_value and type
+  return {
+    price_value: 0,
+    type: 'free',
+  };
 }
