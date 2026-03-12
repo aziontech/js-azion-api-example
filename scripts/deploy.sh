@@ -53,7 +53,7 @@ echo -e "${GREEN}OK${NC}"
 echo -e "${YELLOW}[3/4] Building...${NC}"
 rm -rf dist .edge
 mkdir -p dist .edge
-bun build src/azion.ts --outfile=dist/azion.js --target=browser --minify
+bun build src/azion.ts --outfile=dist/azion.js --target=browser --minify --external postgres
 cp dist/azion.js .edge/worker.js
 echo '{"cache":[],"origin":[],"rules":[],"purge":[]}' > .edge/manifest.json
 echo -e "${GREEN}OK${NC} - $(du -h dist/azion.js | cut -f1)"

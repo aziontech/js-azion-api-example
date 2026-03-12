@@ -8,7 +8,7 @@
     "dev": "bun run src/server.ts",
     "dev:azion": "azion dev",
     "build": "bun build src/index.ts --outdir=dist --target=browser",
-    "build:azion": "bun build src/azion.ts --outfile=dist/azion.js --target=browser --minify",
+    "build:azion": "bun build src/azion.ts --outfile=dist/azion.js --target=browser --minify --external postgres",
     "clean": "rm -rf dist .edge",
     "deploy": "./scripts/deploy.sh",
     "typecheck": "tsc --noEmit",

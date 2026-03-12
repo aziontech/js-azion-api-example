@@ -1,6 +1,7 @@
+-- 'Azion Technologies LLC' only for now
 CREATE TABLE billing_entity (
     billing_entity_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name                 VARCHAR(100) NOT NULL,   -- 'Azion Technologies LLC'
+    name                 VARCHAR(100) NOT NULL,
     country_code         VARCHAR(2) NOT NULL,
     tax_id               VARCHAR(50),
     active               BOOLEAN DEFAULT true,
@@ -47,13 +48,13 @@ CREATE TABLE service_order (
 CREATE TABLE plan_transition (
     plan_transition_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     service_order_id     UUID NOT NULL REFERENCES service_order(service_order_id),
-    from_plan_id         UUID,                    -- null no signup
+    from_plan_id         UUID,                    -- null on signup
     to_plan_id           UUID NOT NULL,
     transition_type      VARCHAR(20) NOT NULL,    -- signup, upgrade, downgrade
     status               VARCHAR(20) NOT NULL,    -- pending, completed, failed, canceled
     effective_immediately BOOLEAN NOT NULL,
     prorated             BOOLEAN DEFAULT false,
-    scheduled_at         TIMESTAMPTZ,             -- para downgrades agendados
+    scheduled_at         TIMESTAMPTZ,             -- for scheduled downgrades
     started_at           TIMESTAMPTZ,
     completed_at         TIMESTAMPTZ,
     error_message        TEXT,
@@ -101,7 +102,7 @@ CREATE TABLE outbox (
     aggregate_id         UUID NOT NULL,            -- service_order_id
     payload              JSONB NOT NULL,
     status               VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending, processing, completed, failed
-    locked_until         TIMESTAMPTZ,              -- lease (null = disponível)
+    locked_until         TIMESTAMPTZ,              -- lease (null = available)
     retry_count          INTEGER DEFAULT 0,
     max_retries          INTEGER DEFAULT 5,
     error_message        TEXT,
@@ -109,21 +110,21 @@ CREATE TABLE outbox (
     processed_at         TIMESTAMPTZ
 );
 
--- Outbox: itens disponíveis para o worker
+-- Outbox: items available for worker
 CREATE INDEX idx_outbox_pending ON outbox (created_at)
     WHERE status IN ('pending', 'processing')
     AND (locked_until IS NULL OR locked_until < NOW());
 
--- Service Order ativa por account (unicidade por tipo)
+-- Active Service Order ativa per account (only one at a time per type)
 CREATE UNIQUE INDEX idx_so_active_plan ON service_order (account_id, type)
     WHERE status IN ('DRAFT', 'ACTIVE', 'PAST_DUE');
 
--- Order por gateway_order_id (busca por subscription_id)
+-- Order per gateway_order_id (lookup for subscription_id)
 CREATE INDEX idx_order_gateway_order ON "order" (gateway_order_id);
 
--- Webhook event por tipo e status (processamento)
+-- Webhook event using type and status (processing)
 CREATE INDEX idx_webhook_event_status ON webhook_event (status, received_at)
     WHERE status IN ('pending', 'processing');
 
--- Plan transition por service_order (histórico)
+-- Plan transition per service_order (history)
 CREATE INDEX idx_plan_transition_so ON plan_transition (service_order_id, created_at);
