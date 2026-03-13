@@ -310,6 +310,40 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
     const db = getDB();
     const { serviceOrders } = schema;
 
+    // Check for existing active service order for this account
+    // The unique constraint idx_so_active_plan ensures only one active order per account/type
+    const existingActiveOrders = await db
+      .select()
+      .from(serviceOrders)
+      .where(
+        and(
+          eq(serviceOrders.accountId, body.accountId),
+          eq(serviceOrders.type, 'plan_subscription'),
+          sql`${serviceOrders.status} IN ('DRAFT', 'ACTIVE', 'PAST_DUE')`
+        )
+      )
+      .limit(1);
+
+    if (existingActiveOrders.length > 0) {
+      const existingOrder = existingActiveOrders[0];
+      console.warn(
+        `[${requestId}] Conflict: Account ${body.accountId} already has active service order ${existingOrder.serviceOrderId}`
+      );
+      return c.json(
+        {
+          success: false,
+          error: 'Conflict',
+          message: `Account ${body.accountId} already has an active service order. Cancel or expire it before creating a new one.`,
+          meta: {
+            requestId,
+            existingOrderId: existingOrder.serviceOrderId,
+            existingOrderStatus: existingOrder.status,
+          },
+        },
+        409
+      );
+    }
+
     // Extract client connection info for Marco Civil compliance
     // These should be set by the upstream proxy/load balancer
     const clientIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim()

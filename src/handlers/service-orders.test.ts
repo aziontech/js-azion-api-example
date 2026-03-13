@@ -288,6 +288,38 @@ describe('Service Orders Handlers', () => {
       expect(body.data.planId).toBe(TEST_PLAN_IDS.paid);
     });
 
+    it('should reject when account already has an active service order', async () => {
+      // First, create a service order
+      const firstResponse = await app.request('/api/v1/service-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId: 12345,
+          planId: TEST_PLAN_IDS.free,
+        }),
+      });
+
+      expect(firstResponse.status).toBe(201);
+      const firstBody = (await firstResponse.json()) as SuccessResponse<ServiceOrderResponse>;
+
+      // Try to create another service order for the same account
+      const secondResponse = await app.request('/api/v1/service-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId: 12345,
+          planId: TEST_PLAN_IDS.free,
+        }),
+      });
+
+      expect(secondResponse.status).toBe(409);
+      const secondBody = (await secondResponse.json()) as JsonApiErrorResponse;
+      expect(secondBody.error).toBe('Conflict');
+      expect(secondBody.message).toContain('already has an active service order');
+      expect(secondBody.meta?.existingOrderId).toBe(firstBody.data.serviceOrderId);
+      expect(secondBody.meta?.existingOrderStatus).toBe('ACTIVE');
+    });
+
     it('should use default IP when headers are missing', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',

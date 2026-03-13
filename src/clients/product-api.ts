@@ -80,14 +80,14 @@ export async function getPlanById(planId: string): Promise<PlanResponse | null> 
  * @throws Error if the API request fails (other than 404)
  */
 export async function getPlanData(planId: string): Promise<PlanData | Record<string, never>> {
-  const plan = await getPlanById(planId);
-  
-  if (!plan) {
-    return {}; // Plan not found - return empty object
-  }
+  // product-api isn't ready yet
+  // const plan = await getPlanById(planId);
+  // 
+  // if (!plan) {
+  //   return {}; // Plan not found - return empty object
+  // }
   
   // Plan exists - return mock data for now
-  // TODO: Integrate with actual Product API to get real price_value and type
   return {
     price_value: 0,
     type: 'free',
