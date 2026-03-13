@@ -273,7 +273,7 @@ describe('Service Orders Handlers', () => {
       expect(body.error).toBe('Invalid plan');
     });
 
-    it('should handle paid plans correctly', async () => {
+    it('should create service order with DRAFT status for paid plans', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -286,6 +286,23 @@ describe('Service Orders Handlers', () => {
       expect(response.status).toBe(201);
       const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
       expect(body.data.planId).toBe(TEST_PLAN_IDS.paid);
+      expect(body.data.status).toBe('DRAFT');
+    });
+
+    it('should create service order with ACTIVE status for free plans', async () => {
+      const response = await app.request('/api/v1/service-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accountId: 88888,
+          planId: TEST_PLAN_IDS.free,
+        }),
+      });
+
+      expect(response.status).toBe(201);
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
+      expect(body.data.planId).toBe(TEST_PLAN_IDS.free);
+      expect(body.data.status).toBe('ACTIVE');
     });
 
     it('should reject when account already has an active service order', async () => {

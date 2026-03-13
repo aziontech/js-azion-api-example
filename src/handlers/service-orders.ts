@@ -307,6 +307,14 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
     
     console.log(`[${requestId}] Plan ${body.planId} found:`, planData);
 
+    // Determine initial status based on plan type
+    // - Free plans: start as ACTIVE immediately
+    // - Paid plans: start as DRAFT (requires payment confirmation)
+    const initialStatus: ServiceOrderStatus = planData.type === 'paid' ? 'DRAFT' : 'ACTIVE';
+    console.log(
+      `[${requestId}] Setting initial status to ${initialStatus} for ${planData.type} plan`
+    );
+
     const db = getDB();
     const { serviceOrders } = schema;
 
@@ -362,7 +370,7 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
       
       // Programmatically set fields
       type: 'plan_subscription',
-      status: 'ACTIVE',
+      status: initialStatus,
       gatewayId: null, // Set later when payment gateway is integrated
       
       // Dates - set later during activation

@@ -89,7 +89,7 @@ export async function getPlanData(planId: string): Promise<PlanData | Record<str
   
   // Plan exists - return mock data for now
   return {
-    price_value: 0,
-    type: 'free',
+    price_value: 99,
+    type: 'paid',
   };
 }
