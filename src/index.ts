@@ -46,6 +46,7 @@ import { healthHandler } from './handlers/health.ts';
 import { listTasksHandler, getTaskHandler } from './handlers/tasks.ts';
 import { dbTestGetHandler, dbTestPostHandler } from './handlers/db-test.ts';
 import { listServiceOrdersHandler, getServiceOrderHandler, createServiceOrderHandler } from './handlers/service-orders.ts';
+import { createPriceHandler } from './handlers/stripe.ts';
 import type { AppEnv } from './types.ts';
 
 // Create Hono app with typed environment
@@ -127,6 +128,10 @@ app.post(
 
 // GET /api/v1/service-orders/:id - Get a single service order (requires auth)
 app.get('/api/v1/service-orders/:id', azionAuthMiddleware, getServiceOrderHandler);
+
+// Stripe endpoints
+// POST /api/v1/stripe/prices - Create a new price in Stripe (requires auth)
+app.post('/api/v1/stripe/prices', azionAuthMiddleware, createPriceHandler);
 
 // ============================================================================
 // Error Handlers
