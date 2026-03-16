@@ -240,6 +240,16 @@ export async function createCheckoutSession(
     }
 
     const data = (await response.json()) as CheckoutSessionResponse;
+    console.log('[Stripe] Checkout session response:', JSON.stringify(data, null, 2));
+    
+    // In development mode (SSO_MODE=development), stripe-mock returns client_secret: null
+    // We inject a fake client_secret for local development testing
+    const ssoMode = getEnv('SSO_MODE', 'production');
+    if (ssoMode === 'development' && !data.client_secret) {
+      data.client_secret = `${data.id}_secret_${Date.now()}`;
+      console.log('[Stripe] Injected client_secret for development mode');
+    }
+    
     return data;
   } catch (error) {
     clearTimeout(timeoutId);
