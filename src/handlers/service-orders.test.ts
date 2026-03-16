@@ -32,6 +32,11 @@ import {
   TEST_PLAN_IDS,
 } from '../test-utils/product-api-mock';
 import {
+  mockCreateCheckoutSession,
+  resetMockCalls,
+  getMockCalls,
+} from '../test-utils/stripe-mock';
+import {
   createTestDb,
   closeTestDb,
   type TestDatabase,
@@ -59,6 +64,11 @@ mock.module('../clients/product-api.js', () => ({
     if (Object.keys(data).length === 0) return null;
     return { id: planId, name: 'Mock Plan', type: 'subscription', active: true };
   },
+}));
+
+// Mock the Stripe client
+mock.module('../clients/stripe.js', () => ({
+  createCheckoutSession: mockCreateCheckoutSession,
 }));
 
 // Import validation middleware AFTER mocks are set up
@@ -153,6 +163,9 @@ describe('Service Orders Handlers', () => {
 
     // Reset mock plans to default state
     resetMockPlans();
+
+    // Reset Stripe mock call tracking
+    resetMockCalls();
 
     // Create Hono app
     app = new Hono<AppEnv>();
@@ -273,7 +286,7 @@ describe('Service Orders Handlers', () => {
       expect(body.error).toBe('Invalid plan');
     });
 
-    it('should create service order with DRAFT status for paid plans', async () => {
+    it('should create service order with DRAFT status and clientSecret for paid plans', async () => {
       const response = await app.request('/api/v1/service-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -284,9 +297,21 @@ describe('Service Orders Handlers', () => {
       });
 
       expect(response.status).toBe(201);
-      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse>;
+      const body = (await response.json()) as SuccessResponse<ServiceOrderResponse> & {
+        payment?: { clientSecret: string };
+      };
       expect(body.data.planId).toBe(TEST_PLAN_IDS.paid);
       expect(body.data.status).toBe('DRAFT');
+      
+      // Assert clientSecret is returned for paid plans
+      expect(body.payment).toBeDefined();
+      expect(body.payment?.clientSecret).toBeDefined();
+      expect(body.payment?.clientSecret).toMatch(/^cs_test_\d+_secret_\d+$/);
+      
+      // Verify Stripe mock was called with the service order ID
+      const mockCalls = getMockCalls();
+      expect(mockCalls.createCheckoutSession).toHaveLength(1);
+      expect(mockCalls.createCheckoutSession[0].serviceOrderId).toBe(body.data.serviceOrderId);
     });
 
     it('should create service order with ACTIVE status for free plans', async () => {
