@@ -128,3 +128,124 @@ export async function createPrice(
     throw error;
   }
 }
+
+/**
+ * Checkout Session response from Stripe API
+ */
+export interface CheckoutSessionResponse {
+  id: string;
+  object: string;
+  after_expiration: null | unknown;
+  allow_promotion_codes: boolean | null;
+  amount_subtotal: number | null;
+  amount_total: number | null;
+  automatic_tax: {
+    enabled: boolean;
+    status: string | null;
+  };
+  billing_address_collection: string | null;
+  cancel_url: string | null;
+  client_secret: string;
+  client_reference_id: string | null;
+  consent: unknown | null;
+  consent_collection: unknown | null;
+  created: number;
+  currency: string | null;
+  custom_fields: unknown[];
+  custom_text: unknown | null;
+  customer: string | null;
+  customer_creation: string | null;
+  customer_details: unknown | null;
+  customer_email: string | null;
+  expires_at: number | null;
+  invoice: string | null;
+  invoice_creation: unknown | null;
+  livemode: boolean;
+  locale: string | null;
+  metadata: Record<string, string>;
+  mode: string;
+  payment_intent: string | null;
+  payment_link: string | null;
+  payment_method_collection: string;
+  payment_method_configuration_details: unknown | null;
+  payment_method_options: unknown | null;
+  payment_status: string;
+  phone_number_collection: unknown | null;
+  recovered_from: string | null;
+  return_url: string | null;
+  saved_payment_method_options: unknown | null;
+  setup_future_usage: string | null;
+  shipping: unknown | null;
+  shipping_address_collection: unknown | null;
+  shipping_options: unknown[];
+  submit_type: string | null;
+  subscription: string | null;
+  subscription_data: unknown | null;
+  success_url: string | null;
+  total_details: {
+    amount_discount: number;
+    amount_shipping: number;
+    amount_tax: number;
+  } | null;
+  ui_mode: string;
+  url: string | null;
+}
+
+/**
+ * Create a checkout session in Stripe
+ *
+ * @param serviceOrderId - The service order ID to associate with this session
+ * @param priceId - The Stripe price ID (default: 'price_QMnYdaWuj2u0MUw')
+ * @param quantity - The quantity (default: 1)
+ * @returns The created checkout session object with client_secret
+ * @throws Error if the API request fails
+ */
+export async function createCheckoutSession(
+  serviceOrderId: string,
+  priceId: string = 'price_QMnYdaWuj2u0MUw',  // Hardcoded for now. Will be updated once products-api supply this info
+  quantity: number = 1
+): Promise<CheckoutSessionResponse> {
+  const config = getStripeApiConfig();
+
+  // Build form data for Stripe API (it expects form-urlencoded)
+  const formData = new URLSearchParams();
+  formData.append('mode', 'subscription');
+  formData.append('metadata[service_order_id]', serviceOrderId);
+  formData.append('line_items[0][price]', priceId);
+  formData.append('line_items[0][quantity]', String(quantity));
+  formData.append('ui_mode', 'embedded');
+  formData.append('return_url', 'http://localhost:3000/webhooks/stripe');  // Note: need to make this dynamic for dev, stage and prod environments
+
+  const url = `${config.baseUrl}/v1/checkout/sessions`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), config.timeout);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${config.apiKey}`,
+      },
+      body: formData.toString(),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Stripe API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const data = (await response.json()) as CheckoutSessionResponse;
+    return data;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Stripe API timeout after ${config.timeout}ms`);
+    }
+    throw error;
+  }
+}

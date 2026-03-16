@@ -13,6 +13,7 @@ import type { ServiceOrder, NewServiceOrder } from '../db/schema.ts';
 import type { createServiceOrderSchema } from '../middleware/validation.ts';
 import type { z } from 'zod';
 import { getPlanData } from '../clients/product-api.ts';
+import { createCheckoutSession } from '../clients/stripe.ts';
 
 /**
  * Inferred type from the Zod schema
@@ -405,6 +406,32 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
     // Handle both postgres-js (array) and AWS Data API (object with rows) results
     const newOrder = Array.isArray(result) ? result[0] : (result as any).rows?.[0];
 
+    // For paid plans, create a Stripe checkout session and return client_secret
+    let clientSecret: string | undefined;
+    if (planData.type === 'paid') {
+      console.log(`[${requestId}] Creating Stripe checkout session for service order ${newOrder.serviceOrderId}`);
+      try {
+        const checkoutSession = await createCheckoutSession(newOrder.serviceOrderId);
+        clientSecret = checkoutSession.client_secret;
+        console.log(`[${requestId}] Stripe checkout session created: ${checkoutSession.id}`);
+      } catch (stripeError) {
+        console.error(`[${requestId}] Failed to create Stripe checkout session:`, stripeError);
+        // Return error - don't leave a DRAFT service order without a checkout session
+        return c.json(
+          {
+            success: false,
+            error: 'Payment setup failed',
+            message: stripeError instanceof Error ? stripeError.message : 'Failed to create checkout session',
+            meta: {
+              requestId,
+              serviceOrderId: newOrder.serviceOrderId,
+            },
+          },
+          500
+        );
+      }
+    }
+
     return c.json(
       {
         success: true,
@@ -413,6 +440,8 @@ export async function createServiceOrderHandler(c: Context<AppEnv>) {
         meta: {
           requestId,
         },
+        // Include payment info for paid plans
+        ...(clientSecret && { payment: { clientSecret } }),
       },
       201
     );
