@@ -64,6 +64,25 @@ const CREATE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_service_order_plan_id ON service_order(plan_id);
   CREATE INDEX IF NOT EXISTS idx_service_order_gateway_id ON service_order(gateway_id);
 
+  -- Webhook Events Table
+  CREATE TABLE IF NOT EXISTS webhook_event (
+    id TEXT PRIMARY KEY,
+    stripe_event_id TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error_message TEXT,
+    processed_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- Indexes for webhook_event
+  CREATE INDEX IF NOT EXISTS idx_webhook_event_stripe_id ON webhook_event(stripe_event_id);
+  CREATE INDEX IF NOT EXISTS idx_webhook_event_status ON webhook_event(status);
+  CREATE INDEX IF NOT EXISTS idx_webhook_event_type ON webhook_event(event_type);
+  CREATE INDEX IF NOT EXISTS idx_webhook_event_created_at ON webhook_event(created_at);
+
   -- Test Users Table
   CREATE TABLE IF NOT EXISTS test_users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +137,7 @@ export function closeTestDb(testDb: TestDatabase): void {
  */
 export function clearTestDb(testDb: TestDatabase): void {
   testDb.sqlite.run('DELETE FROM service_order');
+  testDb.sqlite.run('DELETE FROM webhook_event');
   testDb.sqlite.run('DELETE FROM test_users');
 }
 

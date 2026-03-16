@@ -36,6 +36,17 @@ export const serviceOrderStatusEnumValues = [
 ] as const;
 export type ServiceOrderStatus = (typeof serviceOrderStatusEnumValues)[number];
 
+/**
+ * Webhook Event Status values
+ */
+export const webhookEventStatusEnumValues = [
+  'pending',
+  'processing',
+  'processed',
+  'failed',
+] as const;
+export type WebhookEventStatus = (typeof webhookEventStatusEnumValues)[number];
+
 // ---------------------------------------------------------------------------
 // Service Orders Table
 // ---------------------------------------------------------------------------
@@ -126,6 +137,63 @@ export const serviceOrders = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Webhook Events Table
+// ---------------------------------------------------------------------------
+
+/**
+ * Webhook Events Table (SQLite variant)
+ *
+ * Stores incoming webhook events from Stripe for processing.
+ */
+export const webhookEvents = sqliteTable(
+  'webhook_event',
+  {
+    // Primary Key - UUID stored as TEXT
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+
+    // Stripe event ID (used for idempotency)
+    stripeEventId: text('stripe_event_id', { length: 255 }).notNull().unique(),
+
+    // Event type from Stripe (e.g., 'checkout.session.completed')
+    eventType: text('event_type', { length: 100 }).notNull(),
+
+    // Full event payload as JSON
+    payload: text('payload', { mode: 'json' }).notNull(),
+
+    // Processing status
+    status: text('status', { enum: webhookEventStatusEnumValues })
+      .notNull()
+      .default('pending'),
+
+    // Error message (if processing failed)
+    errorMessage: text('error_message', { length: 500 }),
+
+    // Processing timestamp
+    processedAt: integer('processed_at', { mode: 'timestamp' }),
+
+    // Timestamps
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index on stripe_event_id for fast idempotency checks
+    index('idx_webhook_event_stripe_id').on(table.stripeEventId),
+    // Index on status for processing queue queries
+    index('idx_webhook_event_status').on(table.status),
+    // Index on event_type for filtering
+    index('idx_webhook_event_type').on(table.eventType),
+    // Index on created_at for ordering
+    index('idx_webhook_event_created_at').on(table.createdAt),
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // Test Users Table (for testing database connections)
 // ---------------------------------------------------------------------------
 
@@ -155,6 +223,16 @@ export type ServiceOrder = typeof serviceOrders.$inferSelect;
  * Type for inserting a ServiceOrder (serviceOrderId and timestamps are optional)
  */
 export type NewServiceOrder = typeof serviceOrders.$inferInsert;
+
+/**
+ * Type for selecting a WebhookEvent (all fields)
+ */
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+
+/**
+ * Type for inserting a WebhookEvent (id and timestamps are optional)
+ */
+export type NewWebhookEvent = typeof webhookEvents.$inferInsert;
 
 /**
  * Type for selecting a TestUser (all fields)

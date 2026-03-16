@@ -47,6 +47,7 @@ import { listTasksHandler, getTaskHandler } from './handlers/tasks.ts';
 import { dbTestGetHandler, dbTestPostHandler } from './handlers/db-test.ts';
 import { listServiceOrdersHandler, getServiceOrderHandler, createServiceOrderHandler } from './handlers/service-orders.ts';
 import { createPriceHandler } from './handlers/stripe.ts';
+import { stripeWebhookHandler } from './handlers/webhooks.ts';
 import type { AppEnv } from './types.ts';
 
 // Create Hono app with typed environment
@@ -87,6 +88,10 @@ app.use('*', cors());
 // Health check endpoints (for load balancers and orchestrators)
 app.get('/health', healthHandler);
 app.get('/healthz', healthHandler);
+
+// Webhook endpoints (public, no auth required - Stripe signs requests)
+// POST /webhooks/stripe - Receive webhook events from Stripe
+app.post('/webhooks/stripe', stripeWebhookHandler);
 
 // ============================================================================
 // Protected Routes (require authentication)
