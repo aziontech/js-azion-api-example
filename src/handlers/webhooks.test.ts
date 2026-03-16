@@ -14,6 +14,7 @@ import {
 } from 'bun:test';
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
+import { createHmac } from 'node:crypto';
 
 // ---------------------------------------------------------------------------
 // Mock Setup - MUST be before any imports of the mocked modules
@@ -29,6 +30,10 @@ import { webhookEvents as webhookEventsTable } from '../db/schema-test';
 // Test database instance
 let testDb: TestDatabase;
 
+// Track the current SSO_MODE for testing
+let currentSsoMode = 'development';
+let shouldVerifySignature = false;
+
 // Mock the database module - must be at module scope
 mock.module('../db/index.js', () => ({
   getDB: () => testDb?.db,
@@ -37,6 +42,50 @@ mock.module('../db/index.js', () => ({
   schema: {
     webhookEvents: webhookEventsTable,
   },
+}));
+
+// Mock the env module to control SSO_MODE
+mock.module('../env.js', () => ({
+  getEnv: (key: string, defaultValue?: string) => {
+    if (key === 'SSO_MODE') {
+      return currentSsoMode;
+    }
+    if (key === 'STRIPE_WEBHOOK_SECRET') {
+      return 'whsec_test_secret_key_123';
+    }
+    return defaultValue ?? '';
+  },
+}));
+
+// Mock the stripe client module for signature verification
+mock.module('../clients/stripe.js', () => ({
+  verifyStripeSignature: (payload: string, signatureHeader: string) => {
+    if (!shouldVerifySignature) {
+      return true; // Skip verification in development mode
+    }
+    // Verify the signature using the test secret
+    const webhookSecret = 'whsec_test_secret_key_123';
+    const match = signatureHeader.match(/t=(\d+),v1=(\w+)/);
+    if (!match) {
+      return false;
+    }
+    const timestamp = parseInt(match[1], 10);
+    const providedSignature = match[2];
+    
+    // Compute expected signature
+    const signedPayload = `${timestamp}.${payload}`;
+    const expectedSignature = createHmac('sha256', webhookSecret)
+      .update(signedPayload)
+      .digest('hex');
+    
+    return providedSignature === expectedSignature;
+  },
+  getStripeApiConfig: () => ({
+    baseUrl: 'http://localhost:12111',
+    timeout: 5000,
+    apiKey: 'sk_test_123',
+  }),
+  getStripeWebhookSecret: () => 'whsec_test_secret_key_123',
 }));
 
 // Import handlers AFTER mocks are set up
@@ -64,6 +113,10 @@ describe('Webhooks Handler', () => {
     // Create fresh test database
     testDb = createTestDb();
 
+    // Set default to development mode (no signature verification)
+    currentSsoMode = 'development';
+    shouldVerifySignature = false;
+
     // Create Hono app
     app = new Hono<AppEnv>();
 
@@ -80,6 +133,9 @@ describe('Webhooks Handler', () => {
   afterEach(() => {
     closeTestDb(testDb);
     testDb = null as any;
+    // Reset to development mode after each test
+    currentSsoMode = 'development';
+    shouldVerifySignature = false;
   });
 
   // ---------------------------------------------------------------------------
@@ -202,6 +258,105 @@ describe('Webhooks Handler', () => {
       const body = (await response.json()) as WebhookResponse;
       expect(body.success).toBe(false);
       expect(body.message).toContain('missing required fields');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Signature Verification Tests (production mode)
+  // ---------------------------------------------------------------------------
+
+  describe('POST /webhooks/stripe - signature verification', () => {
+    /**
+     * Helper to generate a valid Stripe signature header
+     */
+    function generateSignatureHeader(payload: string, secret: string): string {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signedPayload = `${timestamp}.${payload}`;
+      const signature = createHmac('sha256', secret)
+        .update(signedPayload)
+        .digest('hex');
+      return `t=${timestamp},v1=${signature}`;
+    }
+
+    beforeEach(() => {
+      // Set to production mode for signature verification tests
+      currentSsoMode = 'production';
+      shouldVerifySignature = true;
+    });
+
+    it('should reject webhook without Stripe-Signature header in production', async () => {
+      const stripeEvent = {
+        id: 'evt_test_no_sig',
+        object: 'event' as const,
+        type: 'checkout.session.completed',
+        data: { object: {} },
+        created: Math.floor(Date.now() / 1000),
+        livemode: false,
+      };
+
+      const response = await app.request('/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stripeEvent),
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as WebhookResponse;
+      expect(body.success).toBe(false);
+      expect(body.message).toContain('Missing Stripe-Signature header');
+    });
+
+    it('should reject webhook with invalid signature in production', async () => {
+      const stripeEvent = {
+        id: 'evt_test_invalid_sig',
+        object: 'event' as const,
+        type: 'checkout.session.completed',
+        data: { object: {} },
+        created: Math.floor(Date.now() / 1000),
+        livemode: false,
+      };
+
+      const response = await app.request('/webhooks/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': 't=1234567890,v1=invalid_signature_here',
+        },
+        body: JSON.stringify(stripeEvent),
+      });
+
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as WebhookResponse;
+      expect(body.success).toBe(false);
+      expect(body.message).toContain('Invalid signature');
+    });
+
+    it('should accept webhook with valid signature in production', async () => {
+      const stripeEvent = {
+        id: 'evt_test_valid_sig',
+        object: 'event' as const,
+        type: 'checkout.session.completed',
+        data: { object: { id: 'cs_test_valid' } },
+        created: Math.floor(Date.now() / 1000),
+        livemode: false,
+      };
+
+      const payload = JSON.stringify(stripeEvent);
+      const signatureHeader = generateSignatureHeader(payload, 'whsec_test_secret_key_123');
+
+      const response = await app.request('/webhooks/stripe', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Stripe-Signature': signatureHeader,
+        },
+        body: payload,
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as WebhookResponse;
+      expect(body.success).toBe(true);
+      expect(body.status).toBe('received');
     });
   });
 });

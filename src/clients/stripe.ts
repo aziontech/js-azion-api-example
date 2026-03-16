@@ -4,6 +4,7 @@
  * Client for interacting with Stripe mock server.
  */
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { getEnv } from '../env.js';
 
 /**
@@ -24,6 +25,132 @@ export function getStripeApiConfig(): StripeApiConfig {
     timeout: parseInt(getEnv('STRIPE_API_TIMEOUT', '5000'), 10),
     apiKey: getEnv('STRIPE_API_KEY', 'sk_test_123'),
   };
+}
+
+/**
+ * Get Stripe webhook secret from environment
+ */
+export function getStripeWebhookSecret(): string {
+  return getEnv('STRIPE_WEBHOOK_SECRET', '');
+}
+
+// ---------------------------------------------------------------------------
+// Webhook Signature Verification
+// ---------------------------------------------------------------------------
+
+/**
+ * Parsed Stripe signature header
+ */
+interface StripeSignatureHeader {
+  timestamp: number;
+  signatures: string[];
+}
+
+/**
+ * Parse the Stripe-Signature header
+ *
+ * Format: t=1234567890,v1=abc123...,v1=def456...
+ *
+ * @param header - The Stripe-Signature header value
+ * @returns Parsed timestamp and signatures
+ */
+function parseSignatureHeader(header: string): StripeSignatureHeader | null {
+  const parts = header.split(',');
+  let timestamp: number | null = null;
+  const signatures: string[] = [];
+
+  for (const part of parts) {
+    const [prefix, value] = part.split('=');
+    if (prefix === 't') {
+      timestamp = parseInt(value, 10);
+    } else if (prefix === 'v1') {
+      signatures.push(value);
+    }
+  }
+
+  if (timestamp === null || signatures.length === 0) {
+    return null;
+  }
+
+  return { timestamp, signatures };
+}
+
+/**
+ * Compute expected signature for webhook payload
+ *
+ * @param timestamp - Unix timestamp from Stripe-Signature header
+ * @param payload - Raw request body as string
+ * @param secret - Stripe webhook signing secret
+ * @returns Hex-encoded signature
+ */
+function computeSignature(timestamp: number, payload: string, secret: string): string {
+  const signedPayload = `${timestamp}.${payload}`;
+  const hmac = createHmac('sha256', secret);
+  hmac.update(signedPayload);
+  return hmac.digest('hex');
+}
+
+/**
+ * Verify Stripe webhook signature
+ *
+ * Validates that the webhook request genuinely came from Stripe by verifying
+ * the signature using the webhook signing secret.
+ *
+ * @param payload - Raw request body as string
+ * @param signatureHeader - The Stripe-Signature header value
+ * @param secret - Stripe webhook signing secret (optional, defaults to env var)
+ * @param tolerance - Maximum age of webhook in seconds (default: 300 = 5 minutes)
+ * @returns true if signature is valid, false otherwise
+ */
+export function verifyStripeSignature(
+  payload: string,
+  signatureHeader: string,
+  secret?: string,
+  tolerance: number = 300
+): boolean {
+  const webhookSecret = secret ?? getStripeWebhookSecret();
+
+  if (!webhookSecret) {
+    console.error('[Stripe] No webhook secret configured');
+    return false;
+  }
+
+  const parsed = parseSignatureHeader(signatureHeader);
+  if (!parsed) {
+    console.error('[Stripe] Invalid signature header format');
+    return false;
+  }
+
+  // Check timestamp is within tolerance
+  const now = Math.floor(Date.now() / 1000);
+  const age = now - parsed.timestamp;
+  if (age > tolerance) {
+    console.error(`[Stripe] Webhook timestamp too old: ${age}s (tolerance: ${tolerance}s)`);
+    return false;
+  }
+
+  // Compute expected signature
+  const expectedSignature = computeSignature(parsed.timestamp, payload, webhookSecret);
+
+  // Compare signatures using timing-safe comparison
+  for (const signature of parsed.signatures) {
+    try {
+      // Both signatures need to be same length for timingSafeEqual
+      const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+      const actualBuffer = Buffer.from(signature, 'hex');
+
+      if (expectedBuffer.length === actualBuffer.length) {
+        if (timingSafeEqual(expectedBuffer, actualBuffer)) {
+          return true;
+        }
+      }
+    } catch {
+      // Invalid hex encoding, continue to next signature
+      continue;
+    }
+  }
+
+  return false;
 }
 
 /**

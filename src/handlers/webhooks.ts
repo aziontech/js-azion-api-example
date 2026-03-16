@@ -3,12 +3,17 @@
  *
  * Handles incoming webhooks from Stripe.
  * Registers all webhook events on webhook_event table for processing.
+ *
+ * In non-development environments (SSO_MODE != 'development'), validates
+ * Stripe signature to ensure webhooks are genuinely from Stripe.
  */
 
 import type { Context } from 'hono';
 import type { AppEnv } from '../types';
 import { getDB, schema } from '../db/index.js';
 import { eq } from 'drizzle-orm';
+import { getEnv } from '../env.js';
+import { verifyStripeSignature } from '../clients/stripe.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,15 +52,63 @@ interface WebhookResponse {
  *
  * Receives webhook events from Stripe and registers them on webhook_event table.
  * Implements idempotency by checking for existing stripe_event_id.
+ *
+ * In non-development environments, validates Stripe signature.
  */
 export async function stripeWebhookHandler(c: Context<AppEnv>): Promise<Response> {
   const requestId = c.get('requestId') || 'unknown';
-  const db = getDB();
-  const { webhookEvents } = schema;
+  const ssoMode = getEnv('SSO_MODE', 'production');
+  const isDevelopment = ssoMode === 'development';
 
   try {
-    // Parse the raw body
-    const body = await c.req.json<StripeEvent>();
+    // Get raw body for signature verification
+    const rawBody = await c.req.text();
+
+    // In non-development environments, verify Stripe signature
+    if (!isDevelopment) {
+      const signatureHeader = c.req.header('Stripe-Signature');
+
+      if (!signatureHeader) {
+        console.error(`[${requestId}] Missing Stripe-Signature header`);
+        return c.json<WebhookResponse>(
+          {
+            success: false,
+            message: 'Missing Stripe-Signature header',
+          },
+          400
+        );
+      }
+
+      const isValidSignature = verifyStripeSignature(rawBody, signatureHeader);
+
+      if (!isValidSignature) {
+        console.error(`[${requestId}] Invalid Stripe signature`);
+        return c.json<WebhookResponse>(
+          {
+            success: false,
+            message: 'Invalid signature',
+          },
+          400
+        );
+      }
+
+      console.log(`[${requestId}] Stripe signature verified successfully`);
+    }
+
+    // Parse the body as JSON
+    let body: StripeEvent;
+    try {
+      body = JSON.parse(rawBody) as StripeEvent;
+    } catch (parseError) {
+      console.error(`[${requestId}] Invalid JSON payload:`, parseError);
+      return c.json<WebhookResponse>(
+        {
+          success: false,
+          message: 'Invalid JSON payload',
+        },
+        400
+      );
+    }
 
     console.log(`[${requestId}] Received Stripe webhook: ${body.type} (${body.id})`);
 
@@ -70,6 +123,9 @@ export async function stripeWebhookHandler(c: Context<AppEnv>): Promise<Response
         400
       );
     }
+
+    const db = getDB();
+    const { webhookEvents } = schema;
 
     // Check for idempotency - has this event already been received?
     const existingEvent = await db
