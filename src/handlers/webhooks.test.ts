@@ -25,7 +25,7 @@ import {
   closeTestDb,
   type TestDatabase,
 } from '../db/test-client';
-import { webhookEvents as webhookEventsTable, serviceOrders as serviceOrdersTable } from '../db/schema-test';
+import { webhookEvents as webhookEventsTable, serviceOrders as serviceOrdersTable, planTransitions as planTransitionsTable } from '../db/schema-test';
 
 // Test database instance
 let testDb: TestDatabase;
@@ -42,6 +42,7 @@ mock.module('../db/index.js', () => ({
   schema: {
     webhookEvents: webhookEventsTable,
     serviceOrders: serviceOrdersTable,
+    planTransitions: planTransitionsTable,
   },
 }));
 
@@ -363,12 +364,13 @@ describe('Webhooks Handler', () => {
     it('should update service order status from DRAFT to ACTIVE on checkout.session.completed', async () => {
       // First, create a service order with DRAFT status
       const serviceOrderId = '550e8400-e29b-41d4-a716-446655440000';
+      const planId = '450e8400-e29b-41d4-a716-446655440001';
       await testDb.db.insert(serviceOrdersTable).values({
         serviceOrderId,
         accountId: 12345,
         type: 'plan_subscription',
         status: 'DRAFT',
-        planId: '450e8400-e29b-41d4-a716-446655440001',
+        planId,
         ip: '127.0.0.1',
         port: 443,
         timezone: 'America/Sao_Paulo',
@@ -386,6 +388,7 @@ describe('Webhooks Handler', () => {
             object: 'checkout.session',
             metadata: {
               service_order_id: serviceOrderId,
+              to_plan_id: planId,
             },
             payment_status: 'paid',
             status: 'complete',
@@ -412,6 +415,20 @@ describe('Webhooks Handler', () => {
 
       expect(updatedOrder).toBeDefined();
       expect(updatedOrder?.status).toBe('ACTIVE');
+
+      // Verify plan_transition record was created
+      const transitions = await testDb.db.select().from(planTransitionsTable);
+      const transition = transitions.find(t => t.serviceOrderId === serviceOrderId);
+
+      expect(transition).toBeDefined();
+      expect(transition?.accountId).toBe(12345);
+      expect(transition?.transitionType).toBe('signup');
+      expect(transition?.status).toBe('completed');
+      expect(transition?.toPlanId).toBe(planId);
+      expect(transition?.fromPlanId).toBeNull();
+      expect(transition?.effectiveImmediately).toBe(true);
+      expect(transition?.startedAt).toBeInstanceOf(Date);
+      expect(transition?.completedAt).toBeInstanceOf(Date);
     });
 
     it('should handle checkout.session.completed with missing service_order_id in metadata', async () => {

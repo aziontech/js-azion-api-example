@@ -47,6 +47,28 @@ export const webhookEventStatusEnumValues = [
 ] as const;
 export type WebhookEventStatus = (typeof webhookEventStatusEnumValues)[number];
 
+/**
+ * Plan Transition Type values
+ */
+export const planTransitionTypeEnumValues = [
+  'signup',
+  'upgrade',
+  'downgrade',
+  'cancel',
+  'reactivate',
+] as const;
+export type PlanTransitionType = (typeof planTransitionTypeEnumValues)[number];
+
+/**
+ * Plan Transition Status values
+ */
+export const planTransitionStatusEnumValues = [
+  'pending',
+  'completed',
+  'failed',
+] as const;
+export type PlanTransitionStatus = (typeof planTransitionStatusEnumValues)[number];
+
 // ---------------------------------------------------------------------------
 // Service Orders Table
 // ---------------------------------------------------------------------------
@@ -194,6 +216,66 @@ export const webhookEvents = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// Plan Transitions Table
+// ---------------------------------------------------------------------------
+
+/**
+ * Plan Transitions Table (SQLite variant)
+ *
+ * Tracks all plan transitions for an account (signups, upgrades, downgrades, etc.)
+ */
+export const planTransitions = sqliteTable(
+  'plan_transition',
+  {
+    // Primary Key - UUID stored as TEXT
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+
+    // Service Order reference (UUID → TEXT)
+    serviceOrderId: text('service_order_id').notNull(),
+
+    // Account reference (BIGINT → INTEGER in SQLite)
+    accountId: integer('account_id').notNull(),
+
+    // Transition type and status (ENUMs → TEXT)
+    transitionType: text('transition_type', { enum: planTransitionTypeEnumValues })
+      .notNull(),
+    status: text('status', { enum: planTransitionStatusEnumValues })
+      .notNull()
+      .default('pending'),
+
+    // Plan references (UUID → TEXT, from_plan_id is null for signup)
+    fromPlanId: text('from_plan_id'),
+    toPlanId: text('to_plan_id').notNull(),
+
+    // Effective immediately flag
+    effectiveImmediately: integer('effective_immediately', { mode: 'boolean' })
+      .notNull()
+      .default(false),
+
+    // Timestamps for transition lifecycle
+    startedAt: integer('started_at', { mode: 'timestamp' }).notNull(),
+    completedAt: integer('completed_at', { mode: 'timestamp' }),
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (table) => [
+    // Index on service_order_id for fast lookups
+    index('idx_plan_transition_service_order_id').on(table.serviceOrderId),
+    // Index on account_id for fast lookups by account
+    index('idx_plan_transition_account_id').on(table.accountId),
+    // Index on status for filtering
+    index('idx_plan_transition_status').on(table.status),
+    // Index on transition_type for filtering
+    index('idx_plan_transition_type').on(table.transitionType),
+    // Index on to_plan_id for plan-related queries
+    index('idx_plan_transition_to_plan_id').on(table.toPlanId),
+  ]
+);
+
+// ---------------------------------------------------------------------------
 // Test Users Table (for testing database connections)
 // ---------------------------------------------------------------------------
 
@@ -243,3 +325,13 @@ export type TestUser = typeof testUsers.$inferSelect;
  * Type for inserting a TestUser (id and createdAt are optional)
  */
 export type NewTestUser = typeof testUsers.$inferInsert;
+
+/**
+ * Type for selecting a PlanTransition (all fields)
+ */
+export type PlanTransition = typeof planTransitions.$inferSelect;
+
+/**
+ * Type for inserting a PlanTransition (id and timestamps are optional)
+ */
+export type NewPlanTransition = typeof planTransitions.$inferInsert;

@@ -83,6 +83,28 @@ const CREATE_TABLES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_webhook_event_type ON webhook_event(event_type);
   CREATE INDEX IF NOT EXISTS idx_webhook_event_created_at ON webhook_event(created_at);
 
+  -- Plan Transitions Table
+  CREATE TABLE IF NOT EXISTS plan_transition (
+    id TEXT PRIMARY KEY,
+    service_order_id TEXT NOT NULL,
+    account_id INTEGER NOT NULL,
+    transition_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    from_plan_id TEXT,
+    to_plan_id TEXT NOT NULL,
+    effective_immediately INTEGER NOT NULL DEFAULT 0,
+    started_at INTEGER NOT NULL,
+    completed_at INTEGER,
+    created_at INTEGER NOT NULL
+  );
+
+  -- Indexes for plan_transition
+  CREATE INDEX IF NOT EXISTS idx_plan_transition_service_order_id ON plan_transition(service_order_id);
+  CREATE INDEX IF NOT EXISTS idx_plan_transition_account_id ON plan_transition(account_id);
+  CREATE INDEX IF NOT EXISTS idx_plan_transition_status ON plan_transition(status);
+  CREATE INDEX IF NOT EXISTS idx_plan_transition_type ON plan_transition(transition_type);
+  CREATE INDEX IF NOT EXISTS idx_plan_transition_to_plan_id ON plan_transition(to_plan_id);
+
   -- Test Users Table
   CREATE TABLE IF NOT EXISTS test_users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -136,6 +158,7 @@ export function closeTestDb(testDb: TestDatabase): void {
  * @param testDb - The test database instance to clear
  */
 export function clearTestDb(testDb: TestDatabase): void {
+  testDb.sqlite.run('DELETE FROM plan_transition');
   testDb.sqlite.run('DELETE FROM service_order');
   testDb.sqlite.run('DELETE FROM webhook_event');
   testDb.sqlite.run('DELETE FROM test_users');

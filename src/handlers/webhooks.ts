@@ -39,7 +39,11 @@ interface StripeEvent {
 interface StripeCheckoutSession {
   id: string;
   object: 'checkout.session';
-  metadata: Record<string, string>;
+  metadata: {
+    service_order_id?: string;
+    to_plan_id?: string;
+    [key: string]: string | undefined;
+  };
   payment_status: string;
   status: string;
 }
@@ -175,6 +179,7 @@ export async function stripeWebhookHandler(c: Context<AppEnv>): Promise<Response
     if (body.type === 'checkout.session.completed') {
       const session = body.data.object as unknown as StripeCheckoutSession;
       const serviceOrderId = session.metadata?.service_order_id;
+      const toPlanId = session.metadata?.to_plan_id;
 
       if (!serviceOrderId) {
         // Missing service_order_id - mark webhook as failed
@@ -190,7 +195,7 @@ export async function stripeWebhookHandler(c: Context<AppEnv>): Promise<Response
       } else {
         console.log(`[${requestId}] Processing checkout.session.completed for service order: ${serviceOrderId}`);
 
-        const { serviceOrders } = schema;
+        const { serviceOrders, planTransitions } = schema;
 
         // Update service order status from DRAFT to ACTIVE
         const updatedOrders = await db
@@ -206,6 +211,21 @@ export async function stripeWebhookHandler(c: Context<AppEnv>): Promise<Response
 
         if (updatedOrder) {
           console.log(`[${requestId}] Service order ${serviceOrderId} activated successfully`);
+
+          // Create plan_transition record for signup
+          const now = new Date();
+          await db.insert(planTransitions).values({
+            serviceOrderId: serviceOrderId,
+            accountId: updatedOrder.accountId,
+            transitionType: 'signup',
+            status: 'completed',
+            toPlanId: toPlanId || updatedOrder.planId,
+            effectiveImmediately: true,
+            startedAt: now,
+            completedAt: now,
+          });
+
+          console.log(`[${requestId}] Plan transition (signup) created for service order ${serviceOrderId}`);
         } else {
           // Service order not found - mark webhook as failed
           console.warn(`[${requestId}] Service order ${serviceOrderId} not found for activation`);
