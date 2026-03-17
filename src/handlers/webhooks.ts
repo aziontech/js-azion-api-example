@@ -34,6 +34,17 @@ interface StripeEvent {
 }
 
 /**
+ * Stripe Checkout Session object (simplified for webhook handling)
+ */
+interface StripeCheckoutSession {
+  id: string;
+  object: 'checkout.session';
+  metadata: Record<string, string>;
+  payment_status: string;
+  status: string;
+}
+
+/**
  * Response for webhook endpoint
  */
 interface WebhookResponse {
@@ -159,6 +170,56 @@ export async function stripeWebhookHandler(c: Context<AppEnv>): Promise<Response
       .returning({ id: webhookEvents.id });
 
     console.log(`[${requestId}] Webhook event registered: ${body.id} -> ${insertedEvent.id}`);
+
+    // Handle checkout.session.completed - activate the service order
+    if (body.type === 'checkout.session.completed') {
+      const session = body.data.object as unknown as StripeCheckoutSession;
+      const serviceOrderId = session.metadata?.service_order_id;
+
+      if (!serviceOrderId) {
+        // Missing service_order_id - mark webhook as failed
+        console.warn(`[${requestId}] checkout.session.completed event missing service_order_id in metadata`);
+        await db
+          .update(webhookEvents)
+          .set({
+            status: 'failed',
+            errorMessage: 'Missing service_order_id in checkout.session metadata',
+            updatedAt: new Date(),
+          })
+          .where(eq(webhookEvents.id, insertedEvent.id));
+      } else {
+        console.log(`[${requestId}] Processing checkout.session.completed for service order: ${serviceOrderId}`);
+
+        const { serviceOrders } = schema;
+
+        // Update service order status from DRAFT to ACTIVE
+        const updatedOrders = await db
+          .update(serviceOrders)
+          .set({
+            status: 'ACTIVE',
+            updatedAt: new Date(),
+          })
+          .where(eq(serviceOrders.serviceOrderId, serviceOrderId))
+          .returning();
+
+        const updatedOrder = Array.isArray(updatedOrders) ? updatedOrders[0] : (updatedOrders as any).rows?.[0];
+
+        if (updatedOrder) {
+          console.log(`[${requestId}] Service order ${serviceOrderId} activated successfully`);
+        } else {
+          // Service order not found - mark webhook as failed
+          console.warn(`[${requestId}] Service order ${serviceOrderId} not found for activation`);
+          await db
+            .update(webhookEvents)
+            .set({
+              status: 'failed',
+              errorMessage: `Service order ${serviceOrderId} not found`,
+              updatedAt: new Date(),
+            })
+            .where(eq(webhookEvents.id, insertedEvent.id));
+        }
+      }
+    }
 
     return c.json<WebhookResponse>(
       {

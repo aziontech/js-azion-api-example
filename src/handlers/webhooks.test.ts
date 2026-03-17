@@ -25,7 +25,7 @@ import {
   closeTestDb,
   type TestDatabase,
 } from '../db/test-client';
-import { webhookEvents as webhookEventsTable } from '../db/schema-test';
+import { webhookEvents as webhookEventsTable, serviceOrders as serviceOrdersTable } from '../db/schema-test';
 
 // Test database instance
 let testDb: TestDatabase;
@@ -41,6 +41,7 @@ mock.module('../db/index.js', () => ({
   getCurrentMode: () => 'local',
   schema: {
     webhookEvents: webhookEventsTable,
+    serviceOrders: serviceOrdersTable,
   },
 }));
 
@@ -143,13 +144,13 @@ describe('Webhooks Handler', () => {
   // ---------------------------------------------------------------------------
 
   describe('POST /webhooks/stripe', () => {
-    it('should register webhook with pending status', async () => {
+    it('should register webhook with pending status for non-checkout events', async () => {
       const stripeEvent = {
         id: 'evt_test_pending',
         object: 'event' as const,
-        type: 'checkout.session.completed',
+        type: 'payment_intent.succeeded', // Not checkout.session.completed
         data: {
-          object: { id: 'cs_test_xyz' },
+          object: { id: 'pi_test_xyz' },
         },
         created: Math.floor(Date.now() / 1000),
         livemode: false,
@@ -164,12 +165,6 @@ describe('Webhooks Handler', () => {
       expect(response.status).toBe(200);
 
       // Verify the event was stored with pending status
-      const storedEvents = await testDb.db
-        .select()
-        .from(webhookEventsTable)
-        .where(({ stripeEventId }) => ({ stripeEventId }));
-
-      // Check via raw query
       const events = await testDb.db
         .select()
         .from(webhookEventsTable);
@@ -357,6 +352,144 @@ describe('Webhooks Handler', () => {
       const body = (await response.json()) as WebhookResponse;
       expect(body.success).toBe(true);
       expect(body.status).toBe('received');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Service Order Activation Tests
+  // ---------------------------------------------------------------------------
+
+  describe('POST /webhooks/stripe - service order activation', () => {
+    it('should update service order status from DRAFT to ACTIVE on checkout.session.completed', async () => {
+      // First, create a service order with DRAFT status
+      const serviceOrderId = '550e8400-e29b-41d4-a716-446655440000';
+      await testDb.db.insert(serviceOrdersTable).values({
+        serviceOrderId,
+        accountId: 12345,
+        type: 'plan_subscription',
+        status: 'DRAFT',
+        planId: '450e8400-e29b-41d4-a716-446655440001',
+        ip: '127.0.0.1',
+        port: 443,
+        timezone: 'America/Sao_Paulo',
+        lastEditor: 'test@example.com',
+      });
+
+      // Send webhook with the service_order_id in metadata
+      const stripeEvent = {
+        id: 'evt_test_activation',
+        object: 'event' as const,
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test_activation',
+            object: 'checkout.session',
+            metadata: {
+              service_order_id: serviceOrderId,
+            },
+            payment_status: 'paid',
+            status: 'complete',
+          },
+        },
+        created: Math.floor(Date.now() / 1000),
+        livemode: false,
+      };
+
+      const response = await app.request('/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stripeEvent),
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as WebhookResponse;
+      expect(body.success).toBe(true);
+      expect(body.status).toBe('received');
+
+      // Verify the service order status was updated to ACTIVE
+      const orders = await testDb.db.select().from(serviceOrdersTable);
+      const updatedOrder = orders.find(o => o.serviceOrderId === serviceOrderId);
+
+      expect(updatedOrder).toBeDefined();
+      expect(updatedOrder?.status).toBe('ACTIVE');
+    });
+
+    it('should handle checkout.session.completed with missing service_order_id in metadata', async () => {
+      const stripeEvent = {
+        id: 'evt_test_no_metadata',
+        object: 'event' as const,
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test_no_metadata',
+            object: 'checkout.session',
+            metadata: {}, // No service_order_id
+            payment_status: 'paid',
+            status: 'complete',
+          },
+        },
+        created: Math.floor(Date.now() / 1000),
+        livemode: false,
+      };
+
+      const response = await app.request('/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stripeEvent),
+      });
+
+      // Webhook should still succeed (event is stored)
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as WebhookResponse;
+      expect(body.success).toBe(true);
+
+      // Verify webhook event was marked as failed
+      const events = await testDb.db.select().from(webhookEventsTable);
+      const storedEvent = events.find(e => e.stripeEventId === 'evt_test_no_metadata');
+      expect(storedEvent).toBeDefined();
+      expect(storedEvent?.status).toBe('failed');
+      expect(storedEvent?.errorMessage).toBe('Missing service_order_id in checkout.session metadata');
+    });
+
+    it('should handle checkout.session.completed for non-existent service order', async () => {
+      const stripeEvent = {
+        id: 'evt_test_nonexistent',
+        object: 'event' as const,
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            id: 'cs_test_nonexistent',
+            object: 'checkout.session',
+            metadata: {
+              service_order_id: '00000000-0000-0000-0000-000000000000', // Non-existent
+            },
+            payment_status: 'paid',
+            status: 'complete',
+          },
+        },
+        created: Math.floor(Date.now() / 1000),
+        livemode: false,
+      };
+
+      const response = await app.request('/webhooks/stripe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(stripeEvent),
+      });
+
+      // Webhook should still succeed (event is stored)
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as WebhookResponse;
+      expect(body.success).toBe(true);
+
+      // Verify webhook event was marked as failed
+      const events = await testDb.db.select().from(webhookEventsTable);
+      const storedEvent = events.find(e => e.stripeEventId === 'evt_test_nonexistent');
+      expect(storedEvent).toBeDefined();
+      expect(storedEvent?.status).toBe('failed');
+      expect(storedEvent?.errorMessage).toBe(
+        'Service order 00000000-0000-0000-0000-000000000000 not found'
+      );
     });
   });
 });
