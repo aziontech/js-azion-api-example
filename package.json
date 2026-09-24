@@ -18,7 +18,7 @@
     "@aws-sdk/client-rds-data": "^3.972.0",
     "@azion/js-api-errors": "file:./js-azion-api-errors",
     "@azion/js-auth": "file:./js-azion-auth",
-    "@hono/zod-validator": "^0.7.6",
+    "@hono/zod-validator": "^0.9.1",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.11.5",
     "zod": "3"
